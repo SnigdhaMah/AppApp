@@ -1,0 +1,15 @@
+node_modules/
+.next/
+*.log
+.env
+.env.local
+.env*.local
+*.pyc
+__pycache__/
+.venv/
+venv/
+cdk.out/
+dist/
+worker/output/
+.DS_Store
+*.js.map
