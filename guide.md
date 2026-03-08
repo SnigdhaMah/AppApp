@@ -135,10 +135,17 @@ Useful for testing agent/LLM changes without deploying.
 
 1. **Create `worker/.env`** (do not commit this file):
 
+   **Recommended: OpenAI API only** (no CLI, good for coding):
+
    ```bash
    OPENAI_API_KEY=sk-your-key
-   # Or: GEMINI_API_KEY=your-key
+   # Optional: better code quality (default is gpt-4o-mini):
+   # OPENAI_MODEL=gpt-4o
    ```
+
+   Or use Gemini: `GEMINI_API_KEY=your-key`
+
+   To use Codex instead: set `USE_CODEX=1` and ensure the Codex CLI is installed or set `CODEX_PATH_OVERRIDE`. If both USE_CODEX and OPENAI_API_KEY are set, Codex takes precedence.
 
 2. **Run a local build** (writes to `worker/output/<job_id>/`):
 
@@ -288,5 +295,6 @@ Or in the **AWS Console**:
 - **Frontend can’t reach API:** Ensure `NEXT_PUBLIC_API_URL` in `frontend/.env.local` has no trailing slash and matches the stack’s API URL.
 - **Jobs stuck in “queued”:** The ECS service might have no running tasks, or the worker might be crashing. Check ECS → Cluster → Service → **Tasks** and **Logs** (CloudWatch log group `/ecs/build-apps-worker`).
 - **Worker needs an API key:** The ECS task definition must have `OPENAI_API_KEY` (or `GEMINI_API_KEY`) set. I can add it via Console (new task definition revision) or Secrets Manager.
+- **“Codex CLI not found” (local, USE_CODEX=1):** The Python SDK does not ship the Codex binary; it expects it to be installed or provided. Options: **(1)** Install the Codex CLI (e.g. [Codex app for Windows](https://developers.openai.com/codex/app/windows) or [CLI install](https://developers.openai.com/codex/cli)), then in `worker/.env` set `CODEX_PATH_OVERRIDE` to the full path to `codex.exe` (or put `codex` on your PATH). **(2)** Or use OpenAI instead: remove or comment out `USE_CODEX=1` and set `OPENAI_API_KEY` (or `API_KEY`) so the worker uses gpt-4o-mini.
 
 If something isn’t covered here, just ping me

@@ -3,7 +3,7 @@ import json
 import os
 import time
 import boto3
-from agent import build_app
+from agent import build_app, expand_request, plan_build
 from botocore.exceptions import ClientError
 
 sqs = boto3.client("sqs")
@@ -73,8 +73,11 @@ def run_forever() -> None:
             continue
 
         try:
-            update_job(job_id, status="running", step="planning", progress=5)
-            result_url = build_app(job_id, prompt, update_job)
+            update_job(job_id, status="running", step="expanding", progress=5)
+            expanded_spec = expand_request(prompt)
+            update_job(job_id, step="planning", progress=10)
+            build_plan = plan_build(expanded_spec)
+            result_url = build_app(job_id, build_plan, update_job)
             update_job(
                 job_id,
                 status="complete",

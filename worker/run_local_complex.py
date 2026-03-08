@@ -11,7 +11,7 @@ load_dotenv()
 os.environ.setdefault("APPS_BUCKET", "")
 os.environ.setdefault("PUBLIC_BASE_URL", "")
 
-from agent import build_app
+from agent import build_app, expand_request, plan_build
 
 COMPLEX_PROMPT = """Build a single-page Pomodoro timer app with:
 - Configurable work duration (default 25 min) and break duration (default 5 min), stored in localStorage.
@@ -34,9 +34,11 @@ def main() -> None:
     provider = "Codex" if os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes") else "OpenAI/Gemini"
     print(f"Complex test (using {provider})")
     print(f"Job ID: {job_id}\n")
-    print("Running agent...")
+    print("Running agent (expand → plan → build)...")
     try:
-        result_url = build_app(job_id, prompt, mock_update_job)
+        expanded_spec = expand_request(prompt)
+        build_plan = plan_build(expanded_spec)
+        result_url = build_app(job_id, build_plan, mock_update_job)
         print(f"\nDone. Result: {result_url}")
         print(f"Open: output/{job_id}/index.html in your browser.")
     except Exception as e:
