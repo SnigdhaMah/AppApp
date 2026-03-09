@@ -37,8 +37,8 @@ def main() -> None:
     print("Running agent (expand -> plan -> build)...")
     try:
         expanded_spec = expand_request(prompt)
-        build_plan = plan_build(expanded_spec)
-        result_url = build_app(job_id, build_plan, mock_update_job)
+        build_brief = plan_build(expanded_spec)
+        result_url = build_app(job_id, build_brief, mock_update_job, user_prompt=prompt)
         print(f"\nDone. Result: {result_url}")
         print(f"Open: output/{job_id}/index.html in your browser.")
     except Exception as e:

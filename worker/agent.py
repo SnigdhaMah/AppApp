@@ -12,8 +12,10 @@ S3_BUCKET = os.environ.get("APPS_BUCKET", "").strip()
 PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
 LOCAL_OUTPUT_DIR = os.environ.get("LOCAL_OUTPUT_DIR", "output").strip()
 
-# OpenAI model (e.g. gpt-4o for better code, gpt-4o-mini for faster/cheaper)
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o").strip()
+# Per-step OpenAI models (expand = small/fast, plan & build = larger). Override with OPENAI_MODEL_* env vars.
+OPENAI_MODEL_EXPAND = (os.environ.get("OPENAI_MODEL_EXPAND") or os.environ.get("OPENAI_MODEL") or "gpt-4o").strip()
+OPENAI_MODEL_PLAN = (os.environ.get("OPENAI_MODEL_PLAN") or os.environ.get("OPENAI_MODEL") or "gpt-5").strip()
+OPENAI_MODEL_BUILD = (os.environ.get("OPENAI_MODEL_BUILD") or os.environ.get("OPENAI_MODEL") or "gpt-5.2").strip()
 
 MAX_ITERS = 3
 
@@ -166,28 +168,28 @@ Your job is to produce a thorough product specification covering:
 
 Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
 
-Be specific and complete. The planner will turn this into a build brief for an engineer.
+**Conciseness**: Be specific but avoid repetition. State each requirement once in the most logical section. Do not restate the same features in multiple sections or produce long appendixes that duplicate earlier content. The planner will use this spec as the single source of truth.
 
-**Completeness check**: after writing the spec, re-read the original request and verify
-every sentence maps to at least one feature in the spec. Call out any requirement you
-chose to omit and explicitly justify why. Never silently drop features."""
+**Completeness check**: After writing the spec, re-read the original request and verify every sentence maps to at least one feature. Call out any requirement you omit and justify why. Never silently drop features."""
 
-# Planning: turn expanded spec into a concrete, detailed build brief
-PLANNING_SYSTEM = """You are a senior front-end engineer acting as a technical planner. You receive a detailed product spec and produce a complete build brief for a code generator.
+# Planning: turn expanded spec into a concrete, concise build brief
+PLANNING_SYSTEM = """You are a senior front-end engineer acting as a technical planner. You receive a product spec and produce a **concise** build brief for a code generator. The spec is the source of truth for features and content; do not copy or restate long sections of the spec. Reference it (e.g. "Data model: see spec section 4") and add only what the generator needs to implement.
 
-The generator will output multiple files. Allowed paths include index.html, data.json, and files under styles/ and scripts/ directories. No CDNs, no external scripts. Persistence via localStorage or inline data.json only.
+Allowed outputs: index.html, data.json, files under styles/ and scripts/. No CDNs. Persistence via localStorage or data.json only.
 
-Your build brief must be exhaustive and unambiguous. Include:
+**Anti-repetition**: Do not paste the spec back into the brief. Do not add an "Appendix" or "Output" that repeats the spec. Keep each section to short bullets; no long paragraphs. If the spec already defines the data model or feature list, your brief need only name the keys/files and point to the spec for details.
+
+Include only:
 
 - **Required file tree**: explicitly list every file the generator must create.
 - **Component map**: list each component and which file owns it.
 - **Render flow**: list what file triggers initial render, what file owns state, and what file binds events.
 - **Architecture**: how the app is structured (e.g. single-page with JS-toggled sections, MVC pattern, event-driven state, etc.)
-- **HTML structure**: every major element, section, and <template> needed. All content must live inside .container — call this out explicitly. Design like an iOS/Android app (bottom tab bars, floating action buttons, clean cards).
-- **State & data**: exact shape of localStorage data, initial seed data if needed, state variables and **the exact mechanism for triggering re-renders (e.g. event listeners calling render() after state mutation).** List every localStorage key name that will be used.
-- **JS modules/classes**: name each major function or class, what it owns, how components communicate. List every element ID that JS will query, so the HTML author knows to include them.
-- **All features**: enumerate every feature with enough detail that the generator can implement it without guessing.
-- **CSS inventory**: for every key element, specify exact values — font-size, padding, color token, display mode. Example: "#counter-display: font-size 5rem, font-weight 700, color var(--accent), text-align center". Never leave hero element sizing implicit.
+- **HTML structure**: List sections, main containers, and <template> IDs. All content inside .container. Call out bottom nav, FAB, and key view sections; do not rewrite the spec's UI layout.
+- **State & data**: localStorage key names, initial seed shape, and re-render trigger (e.g. "state mutates → save() → bus.emit('state:changed') → renderRoute()"). One short paragraph plus key names.
+- **JS modules**: Which file owns bootstrap, state, render, events. List **element IDs** the JS will query (compact list). Do not re-describe every feature.
+- **Features**: Either "Implement all features in spec sections 2–3" or a short checklist (one line per feature area). No long re-enumeration.
+- **CSS inventory**: Theme tokens (--bg, --surface, --accent, etc.) and 5–10 key selectors with critical values (hero, tab bar, cards, buttons). Omit obvious or repeated rules.
 - **Visual spec from personality**: Translate the spec's **Visual personality** into 2–3 concrete CSS directives (e.g. "soft shadows and rounded corners" → use --shadow-lg, --radius-lg on cards; "calm and minimal" → muted palette, generous whitespace). Include these in the brief so the generator applies a consistent visual style.
 - **Visual impact**: The app should feel polished and intentional, not like a default form. Specify: (1) background and surface treatment (e.g. subtle gradient, warm gray, or dark; avoid plain #fff unless justified). (2) At least one "hero" or focal area that uses stronger shadow, accent, or gradient. (3) Avoid an all-white, hospital-like look unless the domain explicitly requires it.
 - **Tab bar / bottom nav**: If the app has a bottom nav or tab bar, the brief must specify its styling explicitly: container display flex, gap; active tab = background var(--accent), color var(--accent-text); inactive tabs = background transparent, color var(--text-muted) (ghost). Never specify that all tabs use the same primary style.
@@ -214,7 +216,7 @@ Your build brief must be exhaustive and unambiguous. Include:
     (what changes in the UI, what resets, what plays/alerts)
   - All phases must be implemented — never implement only the first phase and stub the rest.
 
-Write the brief as a structured technical document (headings + short bullet lists). Do not output code. Be specific enough that two different engineers given this brief would build nearly identical apps."""
+Write the brief as structured headings with short bullets. Do not output code. Do not duplicate the spec: reference it and add only implementation details (IDs, tokens, triggers). Aim for a brief that is shorter than the spec, not longer."""
 
 
 def _parse_json_response(text: str) -> dict:
@@ -284,6 +286,29 @@ def call_llm(prompt: str) -> dict:
     )
 
 
+_codex_ready = False
+
+
+def _ensure_codex_ready() -> None:
+    """In container/CI: install Codex CLI binary and write auth from CODEX_AUTH_JSON if set."""
+    global _codex_ready
+    if _codex_ready:
+        return
+    from openai_codex_sdk import Codex
+
+    # Containers/ECS: SDK does not ship the binary; install it (idempotent).
+    if not (os.environ.get("CODEX_PATH_OVERRIDE") or "").strip():
+        try:
+            version = (os.environ.get("CODEX_CLI_VERSION") or "rust-v0.88.0-alpha.3").strip()
+            Codex.install(version=version)
+        except Exception:
+            pass  # may already be on PATH or installed
+    # Auth from env (e.g. ECS secret CODEX_AUTH_JSON) -> ~/.codex/auth.json
+    if os.environ.get("CODEX_AUTH_JSON"):
+        Codex.login_with_auth_json(overwrite=True)
+    _codex_ready = True
+
+
 def _codex_options() -> dict:
     """Build Codex options from env (e.g. CODEX_PATH_OVERRIDE for custom CLI path)."""
     opts = {}
@@ -298,6 +323,7 @@ def _call_codex(prompt: str) -> dict:
     import asyncio
     from openai_codex_sdk import Codex
 
+    _ensure_codex_ready()
     async def _run() -> dict:
         codex = Codex(_codex_options())
         thread = codex.start_thread({"skip_git_repo_check": True})
@@ -310,13 +336,13 @@ def _call_codex(prompt: str) -> dict:
     return asyncio.run(_run())
 
 
-def _call_openai(prompt: str, api_key: str) -> dict:
+def _call_openai(prompt: str, api_key: str, model: str | None = None) -> dict:
     """Use OpenAI API with JSON mode."""
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=model or OPENAI_MODEL_BUILD,
         messages=[
             {"role": "system", "content": SYSTEM_RULES},
             {"role": "user", "content": prompt},
@@ -348,8 +374,8 @@ def _call_gemini(prompt: str, api_key: str) -> dict:
     return _parse_json_response(text)
 
 
-def call_llm_text(system_prompt: str, user_message: str) -> str:
-    """Call LLM for plain-text response (expansion, planning). Uses same provider as call_llm."""
+def call_llm_text(system_prompt: str, user_message: str, *, model: str | None = None) -> str:
+    """Call LLM for plain-text response (expansion, planning). Uses same provider as call_llm. model only applies to OpenAI."""
     use_codex = os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes")
     if use_codex:
         try:
@@ -361,7 +387,7 @@ def call_llm_text(system_prompt: str, user_message: str) -> str:
                 raise
     openai_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
     if openai_key:
-        return _call_openai_text(system_prompt, user_message, openai_key)
+        return _call_openai_text(system_prompt, user_message, openai_key, model=model)
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         return _call_gemini_text(system_prompt, user_message, gemini_key)
@@ -370,12 +396,12 @@ def call_llm_text(system_prompt: str, user_message: str) -> str:
     )
 
 
-def _call_openai_text(system_prompt: str, user_message: str, api_key: str) -> str:
+def _call_openai_text(system_prompt: str, user_message: str, api_key: str, *, model: str | None = None) -> str:
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=model or OPENAI_MODEL_PLAN,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
@@ -404,6 +430,7 @@ def _call_codex_text(system_prompt: str, user_message: str) -> str:
     import asyncio
     from openai_codex_sdk import Codex
 
+    _ensure_codex_ready()
     async def _run() -> str:
         codex = Codex(_codex_options())
         thread = codex.start_thread({"skip_git_repo_check": True})
@@ -417,13 +444,13 @@ def _call_codex_text(system_prompt: str, user_message: str) -> str:
 
 
 def expand_request(user_prompt: str) -> str:
-    """Expand a short user request into a detailed product spec (features, what users care about)."""
-    return call_llm_text(EXPANSION_SYSTEM, user_prompt)
+    """Expand a short user request into a detailed product spec (features, what users care about). Uses OPENAI_MODEL_EXPAND (default gpt-4o) for OpenAI."""
+    return call_llm_text(EXPANSION_SYSTEM, user_prompt, model=OPENAI_MODEL_EXPAND)
 
 
 def plan_build(expanded_spec: str) -> str:
-    """Turn an expanded product spec into a concrete build brief for the code generator."""
-    return call_llm_text(PLANNING_SYSTEM, expanded_spec)
+    """Turn an expanded product spec into a concrete build brief for the code generator. Uses OPENAI_MODEL_PLAN (default gpt-5) for OpenAI."""
+    return call_llm_text(PLANNING_SYSTEM, expanded_spec, model=OPENAI_MODEL_PLAN)
 
 
 def _get_base_css() -> str:
@@ -544,19 +571,13 @@ def write_files(workdir: str, files: list[dict]) -> None:
     _inject_navbar(workdir)
 
 
-def build_app(job_id: str, user_prompt: str, update_job) -> str:
+def build_app(job_id: str, build_brief: str, update_job, user_prompt: str | None = None) -> str:
+    """Generate, validate, and fix an app from a build brief. Caller must run expand_request then plan_build first."""
     workdir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
+    original_request = (user_prompt or "").strip() or "(see build brief)"
 
     try:
-        # Step 1: Expand the short prompt into a full product spec
-        update_job(job_id, step="expanding", progress=10)
-        expanded_spec = expand_request(user_prompt)
-
-        # Step 2: Plan the build — turn spec into a technical brief
-        update_job(job_id, step="planning", progress=20)
-        build_brief = plan_build(expanded_spec)
-
-        # Step 3: Generate code from the brief
+        # Generate code from the brief (expand + plan are done by the caller)
         update_job(job_id, step="generating", progress=35)
         spec_prompt = f"""Build a complete, production-quality static web app based on the build brief below.
 
@@ -579,7 +600,7 @@ Use class="container" for the main content wrapper (renders below the navbar).
 {build_brief}
 
 ## Original Request (for context)
-{user_prompt}
+{original_request}
 
 Return JSON only — key "files", array of {{"path": "...", "content": "..."}} covering index.html, data.json, and all necessary CSS and JS files within styles/ and scripts/.
 Implement every feature in the brief. Write complete, working code — no placeholders, no TODOs, no stubs.
