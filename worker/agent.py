@@ -84,6 +84,9 @@ You are an expert front-end engineer generating a polished, fully-functional sta
 - Button groups must always use a flex container with gap: var(--space-sm).
   Never let a button group stack vertically on desktop. Set flex-wrap: wrap only
   as a mobile fallback, never as the default layout.
+- Flex containers that allow wrapping MUST set row-gap explicitly (using
+  --space-sm or larger) in addition to column gap. Never rely on gap shorthand
+  alone — wrapped rows will have no vertical breathing room without row-gap.
 - Use CSS Grid and Flexbox for layouts. Add @keyframes animations where meaningful.
 - Implement responsive breakpoints. App must work cleanly at 375px and 1200px widths.
 - Every CSS class toggled by JS must be defined here with actual property values.
@@ -129,7 +132,11 @@ Your job is to produce a thorough product specification covering:
 
 Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
 
-Be specific and complete. The planner will turn this into a build brief for an engineer."""
+Be specific and complete. The planner will turn this into a build brief for an engineer.
+
+**Completeness check**: after writing the spec, re-read the original request and verify
+every sentence maps to at least one feature in the spec. Call out any requirement you
+chose to omit and explicitly justify why. Never silently drop features."""
 
 # Planning: turn expanded spec into a concrete, detailed build brief
 PLANNING_SYSTEM = """You are a senior front-end engineer acting as a technical planner. You receive a detailed product spec and produce a complete build brief for a code generator.
@@ -156,6 +163,16 @@ Your build brief must be exhaustive and unambiguous. Include:
 - **Animations**: name every transition or @keyframes animation, what triggers it, and what properties it affects.
 - **Responsive breakpoints**: specify layout changes at 375px and any other breakpoints needed.
 - **Edge cases & polish**: empty states, validation rules, error messages, keyboard shortcuts, focus management.
+- **Prompt fidelity**: go through the original user request line by line and confirm every
+  explicit feature has a corresponding section in this brief. Never omit, merge, or silently
+  drop features. If a feature is intentionally out of scope, say so explicitly.
+- **Phase-based apps**: if the app has multiple phases or modes (e.g. work/break, round/rest,
+  active/paused), each phase must be:
+  - Visually distinct — different label, color, or background on the phase indicator
+  - Explicitly tracked in JS state with its own named variable
+  - Listed with its transition trigger (what causes the switch) and the exact consequence
+    (what changes in the UI, what resets, what plays/alerts)
+  - All phases must be implemented — never implement only the first phase and stub the rest.
 
 Write the brief as a structured technical document (headings + short bullet lists). Do not output code. Be specific enough that two different engineers given this brief would build nearly identical apps."""
 
@@ -470,6 +487,11 @@ Implement every feature in the brief. Write complete, working code — no placeh
 - [ ] No buttons exist that are not in the build brief (no invented Help/Info/Settings buttons)
 - [ ] All button labels fit on one line (min-width and padding set explicitly)
 - [ ] The app is functional and visually polished at both 375px and 1200px widths
+- [ ] Every feature explicitly mentioned in the original request exists in the output —
+      go through the request line by line and verify each one
+- [ ] Phase-based apps show the current phase name prominently in the UI at all times
+- [ ] All phases are fully implemented — not just the first one
+- [ ] Flex containers with flex-wrap have row-gap set explicitly
 """
         out = call_llm(spec_prompt)
         files = out.get("files", [])
@@ -524,6 +546,9 @@ Return JSON only — key "files", full corrected array. Rules:
 - [ ] Every button group is a flex row — no stacking on desktop
 - [ ] No invented buttons absent from the build brief
 - [ ] All button labels fit on one line
+- [ ] Every feature from the original request is present in the output
+- [ ] All phases of phase-based apps are fully implemented
+- [ ] Flex containers with flex-wrap have row-gap set
 """
             out = call_llm(fix_prompt)
             files = out.get("files", [])
