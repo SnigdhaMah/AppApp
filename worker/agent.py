@@ -18,42 +18,82 @@ OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
 MAX_ITERS = 3
 
 SYSTEM_RULES = """
-You are generating a small static web app.
-Constraints:
-- Output must be valid JSON with shape: {"files":[{"path":"...","content":"..."}]}
-- Only create these files: index.html, style.css, script.js, data.json (optional)
-- Use relative paths in HTML: ./style.css and ./script.js
-- Do NOT use external CDNs or remote scripts.
-- Keep it simple and functional.
-- Data storage: prefer localStorage OR a tiny inline data.json.
+You are an expert front-end engineer generating a polished, fully-functional static web microapp.
 
-Design — a branded base stylesheet is automatically prepended to style.css. You MUST:
-- Use the existing CSS variables in your style.css: --bg, --surface, --text, --text-muted, --accent, --accent-hover, --accent-text, --border, --radius, --radius-sm, --shadow, --space-xs, --space-sm, --space-md, --space-lg, --space-xl. Do NOT redefine these in :root.
-- A branded navbar (logo + "Build Apps") is automatically injected at the top of the page. Do not add your own navbar or header. Use class .container for the main content wrapper (already styled; it appears below the navbar). Use semantic HTML: main, section, label, button, input, etc.
-- In style.css output ONLY app-specific rules (e.g. layout for your sections, IDs, or small overrides). Do not repeat body, .container, or global button/input styles from the base. Plain CSS only — no Sass/SCSS (no darken(), no mixins).
-- Result: every app shares the same branded look; your CSS only adds what is unique to this app.
+## Output Format
+- Return ONLY valid JSON with shape: {"files":[{"path":"...","content":"..."}]}
+- Allowed files: index.html, style.css, script.js, data.json (optional)
+- Use relative paths in HTML: ./style.css and ./script.js
+- Do NOT use external CDNs or remote scripts — all logic must be self-contained.
+
+## JavaScript — write production-quality JS:
+- Use modern ES6+ features freely: classes, async/await, destructuring, modules via <script type="module"> if needed, WeakMap, Proxy, generators, etc.
+- Structure code with clear separation of concerns: data layer, state management, rendering, event handling.
+- Implement rich interactivity: drag-and-drop, animations via requestAnimationFrame, canvas drawing, audio via Web Audio API, real-time filtering/search, keyboard shortcuts, undo/redo stacks, etc. — whatever the app warrants.
+- Persist state with localStorage (stringify/parse complex objects). Implement versioned storage if schema may change.
+- Handle edge cases: empty states, input validation with clear error feedback, loading indicators, debounced inputs.
+- Use event delegation where appropriate. Clean up listeners to avoid memory leaks.
+- Write helper utilities (e.g. uuid(), deepClone(), formatDate()) inline rather than leaving placeholders.
+
+## HTML — semantic and accessible:
+- Use semantic elements: <main>, <section>, <article>, <nav>, <aside>, <dialog>, <details>, <figure>.
+- Accessibility: ARIA roles/labels on interactive elements, keyboard-navigable UI (tabindex, focus management), <label for> on all inputs, role="alert" for dynamic messages.
+- Use <template> tags for repeating UI patterns rendered by JS.
+- Support responsive layout from the start (viewport meta, fluid containers).
+
+## CSS — rich, purposeful styling:
+- Use CSS custom properties (--bg, --surface, --text, --text-muted, --accent, --accent-hover, --accent-text, --border, --radius, --radius-sm, --shadow, --space-xs, --space-sm, --space-md, --space-lg, --space-xl) — do NOT redefine these in :root.
+- Use CSS Grid and Flexbox for layouts. Use CSS Grid named areas for complex layouts.
+- Add meaningful transitions and micro-animations (hover states, focus rings, enter/exit animations via @keyframes, skeleton loaders).
+- Use CSS :is(), :has(), :not(), :nth-child() selectors to reduce redundancy.
+- Implement responsive breakpoints with @media queries. Mobile-first where practical.
+- Output ONLY app-specific rules — no redefining body, .container, or global button/input styles already provided by the base stylesheet.
+
+## Design System
+- A branded navbar (logo + "Build Apps") is auto-injected at the top — do not add your own.
+- Use class .container for the main content wrapper (already styled; appears below the navbar).
+- The base stylesheet provides the design tokens above. Layer your app styles on top.
+
+## Scope & Ambition
+- Build the FULL feature set implied by the request — don't stub or placeholder.
+- If the app has multiple views/screens, implement them all as sections toggled by JS (no page reloads).
+- If data visualization is appropriate, draw it with <canvas> or inline SVG.
+- If the app involves lists or cards, implement sorting, filtering, and search.
+- Aim for an app a user would actually want to use daily.
 """
 
-# Expansion: product reasoning (what the app should be, features, what users care about)
-EXPANSION_SYSTEM = """You are a product expert. The user will give a short request for an app (e.g. "gym app", "todo app").
-Your job is to reason about:
-- What kind of app this is and what it should do.
-- What features are needed (think about what similar successful apps have).
-- What users usually care about for this type of app.
-- What core functionality must be included.
+# Expansion: deep product reasoning
+EXPANSION_SYSTEM = """You are a senior product manager and UX designer. The user will give a short request for an app.
 
-Output a clear, detailed product spec in plain text (a few short paragraphs or bullet points). The spec will be used by a planner to produce a build plan. Assume the app will be built as a single-page static site only: HTML, CSS, JavaScript, with localStorage or a small data.json. No backend, no auth, no external CDNs. Keep the scope achievable within those constraints."""
+Your job is to produce a thorough product specification covering:
 
-# Planning: turn expanded spec into a concrete build brief for the code generator
-PLANNING_SYSTEM = """You are a technical planner. You receive a product spec for a static web app and produce a single, detailed build brief.
-The brief will be given to a code generator that outputs only: index.html, style.css, script.js, and optionally data.json. No CDNs, no external scripts. Data: localStorage or inline data.json only.
+1. **Core purpose** — What problem does this solve? Who uses it and why?
+2. **Feature inventory** — List every feature the app should have, from primary to secondary. Think about what makes the best-in-class version of this app great.
+3. **User flows** — Describe the key interactions step by step (e.g. "User adds item → sees it in list → can edit inline → deletes with confirmation").
+4. **Data model** — What entities/objects need to be stored? What are their fields? How do they relate?
+5. **UI layout** — Describe the screens or sections, how they're organized, what's always visible vs. toggled.
+6. **Delight details** — Small UX touches that make the app feel polished: keyboard shortcuts, animations, empty states, undo, smart defaults, etc.
 
-Your build brief must be concrete and complete so the generator can implement it. Include:
-- All main UI sections and screens (or single-page sections).
-- Every feature and behavior (e.g. add, remove, edit, persist).
-- Any specific UX details from the spec.
+Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
 
-Write the brief as one clear instruction (one or two paragraphs, or a short bullet list). Do not output code. Do not repeat the tech constraints (the generator already knows them). Focus on what to build, not how to implement it."""
+Be specific and complete. The planner will turn this into a build brief for an engineer."""
+
+# Planning: turn expanded spec into a concrete, detailed build brief
+PLANNING_SYSTEM = """You are a senior front-end engineer acting as a technical planner. You receive a detailed product spec and produce a complete build brief for a code generator.
+
+The generator will output: index.html, style.css, script.js, and optionally data.json. No CDNs, no external scripts. Persistence via localStorage or inline data.json only.
+
+Your build brief must be exhaustive and unambiguous. Include:
+
+- **Architecture**: how the app is structured (e.g. single-page with JS-toggled sections, MVC pattern, event-driven state, etc.)
+- **HTML structure**: every major element, section, and <template> needed.
+- **State & data**: exact shape of localStorage data, initial seed data if needed, state variables and what triggers re-renders.
+- **JS modules/classes**: name each major function or class, what it owns, how components communicate.
+- **All features**: enumerate every feature with enough detail that the generator can implement it without guessing.
+- **CSS specifics**: layout strategy (grid vs flex), animations to include, responsive breakpoints.
+- **Edge cases & polish**: empty states, validation rules, error messages, loading states, keyboard shortcuts.
+
+Write the brief as a structured technical document (headings + short bullet lists). Do not output code. Be specific enough that two different engineers given this brief would build nearly the same app."""
 
 
 def _parse_json_response(text: str) -> dict:
@@ -323,13 +363,30 @@ def build_app(job_id: str, user_prompt: str, update_job) -> str:
     workdir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
 
     try:
-        update_job(job_id, step="generating", progress=20)
-        spec_prompt = f"""Generate a static web app. A branded navbar (logo + brand) is auto-injected at the top; do not add a navbar. A base stylesheet is applied; your style.css is appended after it — output only app-specific CSS using base variables. Use class="container" for the main content wrapper (below the navbar).
+    try:
+    try:
+    try:
+        # Step 1: Expand the short prompt into a full product spec
+        update_job(job_id, step="expanding", progress=10)
+        expanded_spec = expand_request(user_prompt)
 
-User request:
+        # Step 2: Plan the build — turn spec into a technical brief
+        update_job(job_id, step="planning", progress=20)
+        build_brief = plan_build(expanded_spec)
+
+        # Step 3: Generate code from the brief
+        update_job(job_id, step="generating", progress=35)
+        spec_prompt = f"""Build a complete, production-quality static web microapp based on the build brief below.
+
+A branded navbar (logo + brand) is auto-injected at the top — do not add your own navbar or header element.
+A base stylesheet with design tokens is already applied — output only app-specific CSS using those variables.
+
+
+## Build Brief
 {user_prompt}
 
-Return JSON only with key "files" (array of {{"path": "...", "content": "..."}}).
+
+
 """
         out = call_llm(spec_prompt)
         files = out.get("files", [])
@@ -350,13 +407,17 @@ Return JSON only with key "files" (array of {{"path": "...", "content": "..."}})
                     with open(p, "r", encoding="utf-8") as fp:
                         current[name] = fp.read()
 
-            fix_prompt = f"""The generated app has issues:
+
 {json.dumps(issues, indent=2)}
 
-Current files:
+
 {json.dumps(current, indent=2)}
 
-Return JSON only with full corrected "files" array (overwrite all).
+
+
+
+## Original Build Brief (for reference)
+{build_brief}
 """
             out = call_llm(fix_prompt)
             files = out.get("files", [])
