@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'AI App Builder (MVP)',
-  description: 'Describe the web app you want and get a generated static app.',
+  title: 'App² — a social network of microapps',
+  description: 'Describe the app you want. We generate it for you.',
 };
 
 import './globals.css';
