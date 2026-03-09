@@ -18,9 +18,13 @@
     --radius: 12px;
     --radius-sm: 8px;
     --radius-lg: 20px;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --radius-pill: 9999px;
+    --shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
     --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
+    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.06);
+    --gradient-subtle: linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, transparent 100%);
     /* Spacing */
     --space-xs: 6px;
     --space-sm: 12px;
@@ -67,6 +71,13 @@ body {
 }
 
 .navbar-logo svg {
+    display: block;
+}
+
+.navbar-logo img {
+    width: 28px;
+    height: 28px;
+    object-fit: contain;
     display: block;
 }
 
@@ -147,6 +158,11 @@ button:hover {
 
 button:active {
     transform: translateY(0);
+}
+
+button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 button.secondary {

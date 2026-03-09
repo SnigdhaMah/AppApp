@@ -91,12 +91,21 @@ You are an expert front-end engineer generating a realistic, product-grade front
 - Interactions: Build hover/active states that mimic physical touch (scale down slightly, change shadow). Add micro-animations and transitions to all state changes.
 - Empty states: Build beautiful, friendly empty states with descriptive text and clear calls to action when lists are empty.
 - Use CSS custom properties (--bg, --surface, --text, --text-muted, --accent,
-  --accent-hover, --accent-text, --border, --radius, --radius-sm, --shadow,
-  --space-xs, --space-sm, --space-md, --space-lg, --space-xl).
+  --accent-hover, --accent-text, --border, --radius, --radius-sm, --radius-lg,
+  --radius-pill, --shadow, --shadow-hover, --shadow-lg, --shadow-card, --shadow-inset,
+  --gradient-subtle, --space-xs, --space-sm, --space-md, --space-lg, --space-xl).
   Do NOT redefine these in :root — they are provided by the base stylesheet.
 - Do NOT redefine body, .container, or global button/input styles from the base.
 - Output ONLY app-specific rules. Every key element must have explicit sizing:
   specify font-size, padding, and display mode — never leave hero elements unstyled.
+- **Tabs / bottom nav:** Inactive tabs must be ghost or muted (e.g. color: var(--text-muted), no fill).
+  Only the active tab uses accent background or strong weight. Never style every tab as primary (solid accent).
+- **Depth and polish:** Use layered shadows for cards (e.g. --shadow-card or --shadow-lg). Add subtle
+  transitions (e.g. transition: box-shadow 0.2s, transform 0.2s) on interactive elements.
+- **Inputs and controls:** Range sliders and all inputs must be styled (track, thumb, focus) using design
+  tokens; avoid raw browser-default appearance.
+- **Typography:** Clear type scale — hero ≥ 4rem, section titles ≥ 1.25rem, labels smaller and muted.
+  Use letter-spacing and font-weight for hierarchy, not only size.
 - Primary display values (counters, scores, results) must use font-size ≥ 4rem.
 - All buttons must have enough padding and min-width that their labels never wrap.
 - Define explicit button hierarchy: exactly ONE button per view/group is primary
@@ -122,6 +131,8 @@ You are an expert front-end engineer generating a realistic, product-grade front
 - The app title / h1 must be styled with font-weight ≥ 600 and font-size ≥ 1.25rem.
   Never leave the title as plain unstyled body text.
 - Exactly ONE button per view is primary (accent bg). All others are secondary or ghost.
+- **Bottom nav / tabs:** Only the active tab is primary (accent or bold); inactive tabs are ghost or
+  muted (transparent background, color: var(--text-muted)). Never style all tabs as solid accent.
 - All button groups are in a single flex row — no stacking on desktop viewports.
 - Consistent spacing using only --space-* variables — no magic pixel numbers.
 - All interactive elements have hover and focus states defined in CSS.
@@ -148,7 +159,7 @@ Your job is to produce a thorough product specification covering:
 3. **User flows** — Describe the key interactions step by step (e.g. "User adds item → sees it in list → can edit inline → deletes with confirmation").
 4. **Data model** — What entities/objects need to be stored? What are their fields? How do they relate?
 5. **UI layout** — Describe the screens or sections, how they're organized, what's always visible vs. toggled. Design for a mobile-first APP feel, not a desktop webpage (e.g. use bottom nav bars, floating action buttons, full height views, cards instead of raw text).
-6. **Visual personality** — What should this app feel like to use? Describe the intended emotional quality (e.g. "satisfying and tactile like a physical counter", "calm and focused like a meditation tool", "energetic and gamified like a fitness tracker"). This will directly guide typography scale, animation style, and color usage decisions.
+6. **Visual personality** — What should this app feel like to use? Describe the intended emotional quality (e.g. "satisfying and tactile like a physical counter", "calm and focused like a meditation tool", "energetic and gamified like a fitness tracker"). This will directly guide typography scale, animation style, and color usage decisions. Also give one sentence on **visual style** — e.g. "Soft and premium (strong shadows, rounded corners, muted palette)" or "Clear and medical (high contrast, simple shapes)" — so the planner can turn it into concrete CSS directives.
 7. **Delight details** — Small UX touches that make the app feel polished: keyboard shortcuts, animations, empty states, undo, smart defaults, progress indicators, etc.
 
 Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
@@ -175,6 +186,8 @@ Your build brief must be exhaustive and unambiguous. Include:
 - **JS modules/classes**: name each major function or class, what it owns, how components communicate. List every element ID that JS will query, so the HTML author knows to include them.
 - **All features**: enumerate every feature with enough detail that the generator can implement it without guessing.
 - **CSS inventory**: for every key element, specify exact values — font-size, padding, color token, display mode. Example: "#counter-display: font-size 5rem, font-weight 700, color var(--accent), text-align center". Never leave hero element sizing implicit.
+- **Visual spec from personality**: Translate the spec's **Visual personality** into 2–3 concrete CSS directives (e.g. "soft shadows and rounded corners" → use --shadow-lg, --radius-lg on cards; "calm and minimal" → muted palette, generous whitespace). Include these in the brief so the generator applies a consistent visual style.
+- **Tab bar / bottom nav**: If the app has a bottom nav or tab bar, the brief must specify its styling explicitly: container display flex, gap; active tab = background var(--accent), color var(--accent-text); inactive tabs = background transparent, color var(--text-muted) (ghost). Never specify that all tabs use the same primary style.
 - **Button hierarchy**: for every button group, name the ONE primary button and justify
   why it is primary. All other buttons must be explicitly labelled secondary (outlined
   border, no fill) or ghost (text only). Specify the exact flex container for each group:
@@ -430,6 +443,21 @@ def _get_navbar_html() -> str:
     return ""
 
 
+def _copy_brand_assets(workdir: str) -> None:
+    """Copy branded logo SVGs from worker/assets/ into workdir/assets/ so every app has them."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_src = os.path.join(base_dir, "assets")
+    assets_dst = os.path.join(workdir, "assets")
+    if not os.path.isdir(assets_src):
+        return
+    os.makedirs(assets_dst, exist_ok=True)
+    for name in ("logo.svg", "red_logo.svg"):
+        src = os.path.join(assets_src, name)
+        if os.path.isfile(src):
+            dst = os.path.join(assets_dst, name)
+            shutil.copy2(src, dst)
+
+
 def _inject_navbar(workdir: str) -> None:
     """Insert the branded navbar as the first child of body in index.html."""
     navbar = _get_navbar_html()
@@ -474,8 +502,10 @@ def _apply_style_template(workdir: str) -> None:
 
     with open(target_css, "r", encoding="utf-8") as f:
         app_css = f.read()
-    # Base first, then app-specific
-    if "/* Base branded styles */" not in app_css:
+    # Prepend base only if design tokens are not already defined (LLM often adds
+    # "Base branded styles" comment without actually defining :root, so we check for tokens)
+    has_tokens = ":root" in app_css and ("--bg:" in app_css or "--bg " in app_css)
+    if not has_tokens:
         combined = "/* Base branded styles */\n" + base_css.rstrip() + "\n\n/* App-specific styles */\n" + app_css.lstrip()
         with open(target_css, "w", encoding="utf-8") as f:
             f.write(combined)
@@ -506,6 +536,7 @@ def write_files(workdir: str, files: list[dict]) -> None:
         os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
         with open(full, "w", encoding="utf-8") as fp:
             fp.write(content)
+    _copy_brand_assets(workdir)
     _apply_style_template(workdir)
     _inject_navbar(workdir)
 
@@ -549,6 +580,8 @@ Use class="container" for the main content wrapper (renders below the navbar).
 Return JSON only — key "files", array of {{"path": "...", "content": "..."}} covering index.html, data.json, and all necessary CSS and JS files within styles/ and scripts/.
 Implement every feature in the brief. Write complete, working code — no placeholders, no TODOs, no stubs.
 
+**Bottom nav / tabs styling:** Bad: all four bottom tabs use background: var(--accent). Good: active tab = background: var(--accent), color: var(--accent-text); inactive tabs = background: transparent, color: var(--text-muted) (ghost).
+
 ## Pre-flight checklist — verify ALL of these before returning your JSON:
 - [ ] Every visible element (h1, sections, all content) is inside .container — nothing sits between the navbar and .container in the DOM
 - [ ] <script> tag has NO type="module" unless the JS contains actual import statements
@@ -563,6 +596,7 @@ Implement every feature in the brief. Write complete, working code — no placeh
 - [ ] Every localStorage.getItem() call is guarded with || 0 or a safe fallback before arithmetic
 - [ ] The h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem in CSS
 - [ ] Exactly ONE button per view is styled as primary (accent bg) — all others are secondary or ghost
+- [ ] Bottom nav / tabs: only one tab (active) is primary; inactive tabs are ghost or muted (transparent, var(--text-muted))
 - [ ] Every button group uses a flex row container — no button group stacks vertically on desktop
 - [ ] No buttons exist that are not in the build brief (no invented Help/Info/Settings buttons)
 - [ ] All button labels fit on one line (min-width and padding set explicitly)
