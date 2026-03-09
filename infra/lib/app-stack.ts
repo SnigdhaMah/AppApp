@@ -165,6 +165,8 @@ export class BuildAppsStack extends cdk.Stack {
     });
 
     const geminiApiKey = this.node.tryGetContext('GEMINI_API_KEY') as string | undefined;
+    const openaiApiKey = this.node.tryGetContext('OPENAI_API_KEY') as string | undefined;
+    
     const containerEnv: Record<string, string> = {
       QUEUE_URL: jobQueue.queueUrl,
       JOBS_TABLE: jobsTable.tableName,
@@ -173,6 +175,9 @@ export class BuildAppsStack extends cdk.Stack {
     };
     if (geminiApiKey) {
       containerEnv.GEMINI_API_KEY = geminiApiKey;
+    }
+    if (openaiApiKey) {
+      containerEnv.OPENAI_API_KEY = openaiApiKey;
     }
 
     taskDefinition.addContainer('Worker', {

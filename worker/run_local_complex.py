@@ -34,7 +34,7 @@ def main() -> None:
     provider = "Codex" if os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes") else "OpenAI/Gemini"
     print(f"Complex test (using {provider})")
     print(f"Job ID: {job_id}\n")
-    print("Running agent (expand → plan → build)...")
+    print("Running agent (expand -> plan -> build)...")
     try:
         expanded_spec = expand_request(prompt)
         build_plan = plan_build(expanded_spec)

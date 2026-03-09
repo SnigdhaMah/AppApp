@@ -27,7 +27,7 @@ def main() -> None:
     prompt = sys.argv[1] if len(sys.argv) > 1 else "Build a simple counter with + and - buttons and display the count."
     job_id = "local-test-1"
     print(f"Prompt: {prompt}\nJob ID: {job_id}\n")
-    print("Running agent (expand → plan → build)...")
+    print("Running agent (expand -> plan -> build)...")
     try:
         expanded_spec = expand_request(prompt)
         build_plan = plan_build(expanded_spec)

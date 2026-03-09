@@ -205,7 +205,7 @@ def _check_node_syntax(js_path: str) -> str | None:
         if result.returncode != 0:
             # Trim noisy absolute path from error
             msg = (result.stderr or result.stdout).strip()
-            msg = msg.replace(js_path, "script.js")
+            msg = msg.replace(js_path, os.path.basename(js_path))
             return msg
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass  # Node not available — skip
@@ -243,21 +243,39 @@ def validate_project(workdir: str) -> list[dict]:
         issues.append({"check": check, "severity": "warning", "message": msg})
 
     html_path = os.path.join(workdir, "index.html")
-    css_path  = os.path.join(workdir, "style.css")
-    js_path   = os.path.join(workdir, "script.js")
 
-    # ── 1. Required files ────────────────────────────────────────────────────
+    # ── 1. Required files & Richness ─────────────────────────────────────────
     if not os.path.exists(html_path):
         error("required_files", "index.html is missing")
         return issues  # can't continue without HTML
-    if not os.path.exists(css_path):
-        error("required_files", "style.css is missing")
-    if not os.path.exists(js_path):
-        error("required_files", "script.js is missing")
 
     html = _read(html_path)
-    css  = _read(css_path)  if os.path.exists(css_path)  else ""
-    js   = _read(js_path)   if os.path.exists(js_path)   else ""
+
+    css_files = []
+    js_files = []
+    total_lines = 0
+
+    for root, _, files in os.walk(workdir):
+        for name in files:
+            path = os.path.join(root, name)
+            if name.endswith(".css"):
+                css_files.append(path)
+            elif name.endswith(".js"):
+                js_files.append(path)
+            
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                total_lines += len(f.readlines())
+
+    if total_lines < 1200:
+        warning("project_size", f"Project too small: only {total_lines} total lines across all files. It lacks product-grade complexity. Add more architecture, views, or reusable components unless explicitly requested otherwise.")
+
+    if not css_files:
+        error("required_files", "No CSS files found")
+    if not js_files:
+        error("required_files", "No JS files found")
+
+    css = "\n".join(_read(p) for p in css_files)
+    js = "\n".join(_read(p) for p in js_files)
 
     # ── 2. HTML structure ────────────────────────────────────────────────────
     analyzer = _HTMLAnalyzer()
@@ -273,9 +291,9 @@ def validate_project(workdir: str) -> list[dict]:
 
     # ── 3. HTML references both required assets ──────────────────────────────
     if not analyzer.linked_css:
-        error("linked_assets", "index.html does not link style.css. Add <link rel='stylesheet' href='./style.css'>.")
+        error("linked_assets", "index.html does not link any CSS. Add <link rel='stylesheet' href='./style.css'> or similar.")
     if not analyzer.linked_js:
-        error("linked_assets", "index.html does not include script.js. Add <script src='./script.js'></script>.")
+        error("linked_assets", "index.html does not include any JS. Add <script src='./script.js'></script> or similar.")
 
     # ── 4. Linked assets exist on disk + no external CDNs ───────────────────
     for href in analyzer.linked_css:
@@ -298,7 +316,7 @@ def validate_project(workdir: str) -> list[dict]:
     if analyzer.has_module_script and not _has_import_statements(js):
         error(
             "module_script",
-            '<script type="module"> is used but script.js has no import statements. '
+            '<script type="module"> is used but JS has no import statements. '
             "This will silently break the app on file:// URLs. "
             "Remove type=\"module\" from the <script> tag.",
         )
@@ -308,7 +326,7 @@ def validate_project(workdir: str) -> list[dict]:
         error(
             "inline_handlers",
             f"Inline event handler found in HTML: {handler}. "
-            "All events must be bound in script.js via addEventListener.",
+            "All events must be bound in JS via addEventListener.",
         )
 
     # ── 7. Button accessibility ──────────────────────────────────────────────
@@ -341,7 +359,7 @@ def validate_project(workdir: str) -> list[dict]:
             if qid not in analyzer.ids:
                 error(
                     "js_dom_reference",
-                    f'script.js queries id="{qid}" but no element with that id exists in index.html.',
+                    f'JS queries id="{qid}" but no element with that id exists in index.html.',
                 )
 
     # ── 11. JS classList → CSS class cross-reference ──────────────────────────
@@ -352,7 +370,7 @@ def validate_project(workdir: str) -> list[dict]:
             if cls not in defined:
                 error(
                     "js_css_class_reference",
-                    f'script.js toggles class "{cls}" via classList but ".{cls}" is not defined in style.css.',
+                    f'JS toggles class "{cls}" via classList but ".{cls}" is not defined in any CSS file.',
                 )
 
     # ── 12. localStorage key consistency ──────────────────────────────────────
@@ -372,7 +390,7 @@ def validate_project(workdir: str) -> list[dict]:
             line_no = css[: m.start()].count("\n") + 1
             error(
                 "css_scss_functions",
-                f'style.css line {line_no}: "{m.group(0)}" is a Sass/SCSS function and is invalid in plain CSS.',
+                f'CSS: "{m.group(0)}" is a Sass/SCSS function and is invalid in plain CSS.',
             )
 
     # ── 14. CSS: no redefinition of base variables ────────────────────────────
@@ -383,14 +401,16 @@ def validate_project(workdir: str) -> list[dict]:
                 if var in _BASE_VARS:
                     error(
                         "css_base_var_redefinition",
-                        f'style.css redefines base variable "{var}" in :root. '
+                        f'CSS redefines base variable "{var}" in :root. '
                         "These are provided by the base stylesheet — remove the redefinition.",
                     )
 
     # ── 15. JS syntax via Node.js ─────────────────────────────────────────────
-    if js and os.path.exists(js_path):
-        node_error = _check_node_syntax(js_path)
-        if node_error:
-            error("js_syntax", f"script.js has a syntax error:\n{node_error}")
+    if js_files:
+        for js_path in js_files:
+            if os.path.exists(js_path):
+                node_error = _check_node_syntax(js_path)
+                if node_error:
+                    error("js_syntax", f"{os.path.basename(js_path)} has a syntax error:\n{node_error}")
 
     return issues
