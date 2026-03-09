@@ -94,6 +94,7 @@ You are an expert front-end engineer generating a realistic, product-grade front
   --accent-hover, --accent-text, --border, --radius, --radius-sm, --radius-lg,
   --radius-pill, --shadow, --shadow-hover, --shadow-lg, --shadow-card, --shadow-inset,
   --gradient-subtle, --space-xs, --space-sm, --space-md, --space-lg, --space-xl).
+  For a warmer or bolder look (avoid cold white): --bg-warm, --surface-warm, --accent-strong are available.
   Do NOT redefine these in :root — they are provided by the base stylesheet.
 - Do NOT redefine body, .container, or global button/input styles from the base.
 - Output ONLY app-specific rules. Every key element must have explicit sizing:
@@ -140,6 +141,7 @@ You are an expert front-end engineer generating a realistic, product-grade front
 - Only include UI elements (buttons, sections, inputs) that are in the build brief.
   Do not invent extra controls (Help, Info, Settings) unless explicitly specified.
 - The app looks like it belongs in a modern SaaS product, not a browser default stylesheet.
+- Avoid a flat, all-white, clinical look unless the app domain requires it; use tokens for depth (--shadow-card, --gradient-subtle) and a clear visual personality (warm, bold, premium, or calm with a tint).
 
 ## Scope & Ambition
 - Build the FULL feature set implied by the request — no stubs, no TODOs, no placeholders.
@@ -159,7 +161,7 @@ Your job is to produce a thorough product specification covering:
 3. **User flows** — Describe the key interactions step by step (e.g. "User adds item → sees it in list → can edit inline → deletes with confirmation").
 4. **Data model** — What entities/objects need to be stored? What are their fields? How do they relate?
 5. **UI layout** — Describe the screens or sections, how they're organized, what's always visible vs. toggled. Design for a mobile-first APP feel, not a desktop webpage (e.g. use bottom nav bars, floating action buttons, full height views, cards instead of raw text).
-6. **Visual personality** — What should this app feel like to use? Describe the intended emotional quality (e.g. "satisfying and tactile like a physical counter", "calm and focused like a meditation tool", "energetic and gamified like a fitness tracker"). This will directly guide typography scale, animation style, and color usage decisions. Also give one sentence on **visual style** — e.g. "Soft and premium (strong shadows, rounded corners, muted palette)" or "Clear and medical (high contrast, simple shapes)" — so the planner can turn it into concrete CSS directives.
+6. **Visual personality** — What should this app feel like to use? Describe the intended emotional quality (e.g. "satisfying and tactile like a physical counter", "calm and focused like a meditation tool", "energetic and gamified like a fitness tracker"). This will directly guide typography scale, animation style, and color usage decisions. Also give one sentence on **visual style** — e.g. "Soft and premium (strong shadows, rounded corners, muted palette)" or "Clear and medical (high contrast, simple shapes)" — so the planner can turn it into concrete CSS directives. Unless the app is explicitly medical/clinical, avoid a default "white/medical" look; prefer a **distinctive visual personality**: e.g. warm and soft, bold and vibrant, playful, premium (dark or rich), or calm with a tint (warm gray or soft color). State one sentence for visual style that the planner will turn into concrete CSS (e.g. "Warm and inviting with soft shadows and a cream background" or "Bold and energetic with a dark header and strong accent").
 7. **Delight details** — Small UX touches that make the app feel polished: keyboard shortcuts, animations, empty states, undo, smart defaults, progress indicators, etc.
 
 Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
@@ -187,6 +189,7 @@ Your build brief must be exhaustive and unambiguous. Include:
 - **All features**: enumerate every feature with enough detail that the generator can implement it without guessing.
 - **CSS inventory**: for every key element, specify exact values — font-size, padding, color token, display mode. Example: "#counter-display: font-size 5rem, font-weight 700, color var(--accent), text-align center". Never leave hero element sizing implicit.
 - **Visual spec from personality**: Translate the spec's **Visual personality** into 2–3 concrete CSS directives (e.g. "soft shadows and rounded corners" → use --shadow-lg, --radius-lg on cards; "calm and minimal" → muted palette, generous whitespace). Include these in the brief so the generator applies a consistent visual style.
+- **Visual impact**: The app should feel polished and intentional, not like a default form. Specify: (1) background and surface treatment (e.g. subtle gradient, warm gray, or dark; avoid plain #fff unless justified). (2) At least one "hero" or focal area that uses stronger shadow, accent, or gradient. (3) Avoid an all-white, hospital-like look unless the domain explicitly requires it.
 - **Tab bar / bottom nav**: If the app has a bottom nav or tab bar, the brief must specify its styling explicitly: container display flex, gap; active tab = background var(--accent), color var(--accent-text); inactive tabs = background transparent, color var(--text-muted) (ghost). Never specify that all tabs use the same primary style.
 - **Button hierarchy**: for every button group, name the ONE primary button and justify
   why it is primary. All other buttons must be explicitly labelled secondary (outlined
@@ -566,6 +569,7 @@ Required:
 - state separated from render logic (BUT state changes MUST trigger a re-render of the DOM! Use callbacks, events, or explicit render calls after state mutations)
 - enough implementation depth that the app feels like a real product, not a coding exercise
 - UI must feel like a modern iOS/Android App (floating action buttons, bottom tabs, clean padded cards, subtle shadows) — NOT a basic 2000s webpage.
+- Avoid a flat, all-white, clinical look. Use the design tokens for depth (e.g. --shadow-card, --gradient-subtle), and give the app a clear visual personality (warm, bold, premium, or calm with a tint) unless the brief says otherwise.
 
 A branded navbar (logo + brand) is auto-injected at the top — do not add your own navbar or header element.
 A base stylesheet with design tokens is already applied — output only app-specific CSS using those variables.
@@ -606,6 +610,7 @@ Implement every feature in the brief. Write complete, working code — no placeh
 - [ ] Phase-based apps show the current phase name prominently in the UI at all times
 - [ ] All phases are fully implemented — not just the first one
 - [ ] Flex containers with flex-wrap have row-gap set explicitly
+- [ ] The app does not look like a default white/medical form unless the brief requires it; it has a clear visual personality (warm, bold, premium, or calm with tint)
 """
         out = call_llm(spec_prompt)
         files = out.get("files", [])
@@ -659,6 +664,7 @@ Return JSON only — key "files", full corrected array. Rules:
 - [ ] h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem
 - [ ] Exactly ONE button per view is primary — all others are secondary or ghost
 - [ ] Every button group is a flex row — no stacking on desktop
+- [ ] The app does not look like a default white/medical form unless the brief requires it; it has a clear visual personality (warm, bold, premium, or calm with tint)
 - [ ] No invented buttons absent from the build brief
 - [ ] All button labels fit on one line
 - [ ] Every feature from the original request is present in the output

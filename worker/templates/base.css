@@ -1,10 +1,15 @@
 /* Branded base template — applied to every generated app. Do not remove. */
+/* Prefer warm or tinted backgrounds over pure #fff when the app is not medical. */
 
 :root {
     /* Surfaces */
     --bg: #f5f5f7;
     --surface: #ffffff;
     --surface-hover: #fafafa;
+    /* Warm alternatives (use for non-medical apps to avoid a cold white look) */
+    --bg-warm: #faf8f5;
+    --surface-warm: #fffefb;
+    --accent-strong: #005bb5;
     /* Text */
     --text: #1d1d1f;
     --text-muted: #6e6e73;
