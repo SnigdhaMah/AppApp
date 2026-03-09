@@ -49,6 +49,17 @@ You are an expert front-end engineer generating a polished, fully-functional sta
   rule in style.css. Never toggle a class that has no styles defined.
 - localStorage.getItem('key') and localStorage.setItem('key') must use identical key
   strings. Never read a key that was never written.
+- Never derive state by reading from the DOM. All state must live in JS variables
+  or a state object. The DOM is output-only — always read from state, write to DOM,
+  never the reverse. Example of what NOT to do:
+    BAD:  this.count = document.getElementById('display').textContent + 1;
+    GOOD: this.count += 1; then update the DOM from this.count.
+- Always guard localStorage reads against null before arithmetic. Use:
+    parseInt(localStorage.getItem('key') ?? '0', 10) || 0
+  Never pass null, undefined, or an empty string into parseInt, Number(), or
+  any arithmetic operation — this produces NaN which silently corrupts all state.
+- After any state mutation, validate that the new value is a finite number before
+  saving or rendering: if (!Number.isFinite(this.count)) this.count = 0;
 - Use modern ES6+ features: classes, async/await, destructuring, WeakMap, generators, etc.
 - Structure code with clear separation: data layer, state management, rendering, events.
 - Implement rich interactivity: drag-and-drop, requestAnimationFrame animations, canvas,
@@ -67,7 +78,12 @@ You are an expert front-end engineer generating a polished, fully-functional sta
   specify font-size, padding, and display mode — never leave hero elements unstyled.
 - Primary display values (counters, scores, results) must use font-size ≥ 4rem.
 - All buttons must have enough padding and min-width that their labels never wrap.
-- Define explicit button hierarchy: primary (accent bg), secondary (outlined), ghost.
+- Define explicit button hierarchy: exactly ONE button per view/group is primary
+  (accent background). All others must be secondary (outlined) or ghost. Never
+  style two sibling buttons as primary — it destroys hierarchy.
+- Button groups must always use a flex container with gap: var(--space-sm).
+  Never let a button group stack vertically on desktop. Set flex-wrap: wrap only
+  as a mobile fallback, never as the default layout.
 - Use CSS Grid and Flexbox for layouts. Add @keyframes animations where meaningful.
 - Implement responsive breakpoints. App must work cleanly at 375px and 1200px widths.
 - Every CSS class toggled by JS must be defined here with actual property values.
@@ -79,9 +95,15 @@ You are an expert front-end engineer generating a polished, fully-functional sta
 
 ## Visual Quality Bar — every app must meet these before output:
 - Clear visual hierarchy: one dominant hero element (the main value, CTA, or display).
+- The app title / h1 must be styled with font-weight ≥ 600 and font-size ≥ 1.25rem.
+  Never leave the title as plain unstyled body text.
+- Exactly ONE button per view is primary (accent bg). All others are secondary or ghost.
+- All button groups are in a single flex row — no stacking on desktop viewports.
 - Consistent spacing using only --space-* variables — no magic pixel numbers.
 - All interactive elements have hover and focus states defined in CSS.
 - No text or elements overflow or clip their container at any viewport width.
+- Only include UI elements (buttons, sections, inputs) that are in the build brief.
+  Do not invent extra controls (Help, Info, Settings) unless explicitly specified.
 - The app looks like it belongs in a modern SaaS product, not a browser default stylesheet.
 
 ## Scope & Ambition
@@ -122,7 +144,15 @@ Your build brief must be exhaustive and unambiguous. Include:
 - **JS modules/classes**: name each major function or class, what it owns, how components communicate. List every element ID that JS will query, so the HTML author knows to include them.
 - **All features**: enumerate every feature with enough detail that the generator can implement it without guessing.
 - **CSS inventory**: for every key element, specify exact values — font-size, padding, color token, display mode. Example: "#counter-display: font-size 5rem, font-weight 700, color var(--accent), text-align center". Never leave hero element sizing implicit.
-- **Button hierarchy**: explicitly declare which buttons are primary (accent background), secondary (outlined), or ghost — and their relative sizes/padding.
+- **Button hierarchy**: for every button group, name the ONE primary button and justify
+  why it is primary. All other buttons must be explicitly labelled secondary (outlined
+  border, no fill) or ghost (text only). Specify the exact flex container for each group:
+  display flex, flex-direction row, gap value, alignment, and whether any button is
+  full-width. Example: ".btn-group: display flex, flex-direction row, gap var(--space-sm),
+  align-items center — Increment=primary, Decrement=secondary, Reset=ghost".
+- **Brief discipline**: only include buttons and UI controls that are directly required
+  by the feature list. Do not add utility buttons (Help, Info, About, Settings) unless
+  the spec explicitly calls for them.
 - **Animations**: name every transition or @keyframes animation, what triggers it, and what properties it affects.
 - **Responsive breakpoints**: specify layout changes at 375px and any other breakpoints needed.
 - **Edge cases & polish**: empty states, validation rules, error messages, keyboard shortcuts, focus management.
@@ -432,6 +462,12 @@ Implement every feature in the brief. Write complete, working code — no placeh
 - [ ] Every <button> has visible text or an aria-label
 - [ ] Every <label for="x"> has a matching id="x" on an input element
 - [ ] The hero/primary display element uses font-size ≥ 4rem in style.css
+- [ ] No state value is ever read from the DOM — all state lives in JS variables
+- [ ] Every localStorage.getItem() call is guarded with || 0 or a safe fallback before arithmetic
+- [ ] The h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem in style.css
+- [ ] Exactly ONE button per view is styled as primary (accent bg) — all others are secondary or ghost
+- [ ] Every button group uses a flex row container — no button group stacks vertically on desktop
+- [ ] No buttons exist that are not in the build brief (no invented Help/Info/Settings buttons)
 - [ ] All button labels fit on one line (min-width and padding set explicitly)
 - [ ] The app is functional and visually polished at both 375px and 1200px widths
 """
@@ -481,6 +517,12 @@ Return JSON only — key "files", full corrected array. Rules:
 - [ ] Every <button> has visible text or aria-label
 - [ ] Every <label for="x"> has a matching id="x" input
 - [ ] Hero display element uses font-size ≥ 4rem
+- [ ] No state read from the DOM — all state lives in JS variables
+- [ ] Every localStorage.getItem() is guarded with a safe fallback before arithmetic
+- [ ] h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem
+- [ ] Exactly ONE button per view is primary — all others are secondary or ghost
+- [ ] Every button group is a flex row — no stacking on desktop
+- [ ] No invented buttons absent from the build brief
 - [ ] All button labels fit on one line
 """
             out = call_llm(fix_prompt)
