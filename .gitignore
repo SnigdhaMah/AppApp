@@ -13,3 +13,4 @@ dist/
 worker/output/
 .DS_Store
 *.js.map
+keys.txt
