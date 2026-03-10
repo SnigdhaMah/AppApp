@@ -10,6 +10,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 
@@ -166,7 +167,8 @@ export class BuildAppsStack extends cdk.Stack {
 
     const geminiApiKey = this.node.tryGetContext('GEMINI_API_KEY') as string | undefined;
     const openaiApiKey = this.node.tryGetContext('OPENAI_API_KEY') as string | undefined;
-    
+    const codexAuthSecretArn = this.node.tryGetContext('CODEX_AUTH_SECRET_ARN') as string | undefined;
+
     const containerEnv: Record<string, string> = {
       QUEUE_URL: jobQueue.queueUrl,
       JOBS_TABLE: jobsTable.tableName,
@@ -179,6 +181,20 @@ export class BuildAppsStack extends cdk.Stack {
     if (openaiApiKey) {
       containerEnv.OPENAI_API_KEY = openaiApiKey;
     }
+    if (codexAuthSecretArn) {
+      containerEnv.USE_CODEX = '1';
+    }
+
+    const containerSecrets: Record<string, ecs.Secret> = {};
+    if (codexAuthSecretArn) {
+      const codexAuthSecret = secretsmanager.Secret.fromSecretCompleteArn(
+        this,
+        'CodexAuthSecret',
+        codexAuthSecretArn
+      );
+      codexAuthSecret.grantRead(executionRole);
+      containerSecrets.CODEX_AUTH_JSON = ecs.Secret.fromSecretsManager(codexAuthSecret);
+    }
 
     taskDefinition.addContainer('Worker', {
       image: ecs.ContainerImage.fromDockerImageAsset(workerImage),
@@ -187,6 +203,7 @@ export class BuildAppsStack extends cdk.Stack {
         logGroup,
       }),
       environment: containerEnv,
+      secrets: Object.keys(containerSecrets).length > 0 ? containerSecrets : undefined,
     });
 
     const workerService = new ecs.FargateService(this, 'WorkerService', {

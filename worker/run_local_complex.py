@@ -25,7 +25,11 @@ COMPLEX_PROMPT = """Build a single-page Pomodoro timer app with:
 def mock_update_job(job_id: str, **kwargs: object) -> None:
     step = kwargs.get("step", "")
     progress = kwargs.get("progress", 0)
-    print(f"  [{progress}%] {step}")
+    duration = kwargs.get("duration_seconds")
+    if duration is not None:
+        print(f"  [100%] {step} — {duration}s")
+    else:
+        print(f"  [{progress}%] {step}")
 
 
 def main() -> None:

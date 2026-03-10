@@ -1,35 +1,36 @@
 /* Branded base template — applied to every generated app. Do not remove. */
-/* Prefer warm or tinted backgrounds over pure #fff when the app is not medical. */
+/* Default: dark theme with red/purple accent. Override only if the brief asks for light/medical. */
 
 :root {
-    /* Surfaces */
-    --bg: #f5f5f7;
-    --surface: #ffffff;
-    --surface-hover: #fafafa;
-    /* Warm alternatives (use for non-medical apps to avoid a cold white look) */
+    /* Surfaces — dark default */
+    --bg: #0f0f12;
+    --surface: #1a1a1f;
+    --surface-hover: #242429;
+    /* Light alternatives (use only when brief explicitly requests light theme) */
     --bg-warm: #faf8f5;
     --surface-warm: #fffefb;
-    --accent-strong: #005bb5;
+    --accent-strong: #a855f7;
     /* Text */
-    --text: #1d1d1f;
-    --text-muted: #6e6e73;
-    /* Accent (primary actions, links) */
-    --accent: #0071e3;
-    --accent-hover: #0077ed;
+    --text: #f4f4f5;
+    --text-muted: #a1a1aa;
+    --text-dark: #f4f4f5;
+    /* Accent (primary actions) — red or purple; default purple */
+    --accent: #a855f7;
+    --accent-hover: #9333ea;
     --accent-text: #ffffff;
     /* Borders & effects */
-    --border: #e5e5ea;
-    --border-hover: #d2d2d7;
+    --border: #27272a;
+    --border-hover: #3f3f46;
     --radius: 12px;
     --radius-sm: 8px;
     --radius-lg: 20px;
     --radius-pill: 9999px;
-    --shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
-    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.08);
-    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.06);
-    --gradient-subtle: linear-gradient(180deg, rgba(0, 0, 0, 0.02) 0%, transparent 100%);
+    --shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
+    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
+    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+    --gradient-subtle: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
     /* Spacing */
     --space-xs: 6px;
     --space-sm: 12px;

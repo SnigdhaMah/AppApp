@@ -143,6 +143,29 @@ class _HTMLAnalyzer(HTMLParser):
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
+def _snippet(
+    content: str,
+    start_pos: int | None = None,
+    line_no: int | None = None,
+    context_lines: int = 2,
+) -> str:
+    """Return a small window of lines (e.g. line_no ± context_lines) from content.
+    If start_pos is given and line_no is not, derive line number from content[:start_pos].
+    """
+    if line_no is None and start_pos is not None:
+        line_no = content[:start_pos].count("\n") + 1
+    if line_no is None:
+        return ""
+    lines = content.splitlines()
+    total = len(lines)
+    if total == 0:
+        return ""
+    low = max(1, line_no - context_lines)
+    high = min(total, line_no + context_lines)
+    # 1-based to 0-based
+    window = lines[low - 1 : high]
+    return "\n".join(window)
+
 def _read(path: str) -> str:
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         return f.read()
@@ -151,13 +174,21 @@ def _read(path: str) -> str:
 def _extract_js_queried_ids(js: str) -> set[str]:
     """Return all ids passed to getElementById or querySelector('#id')."""
     ids: set[str] = set()
-    # getElementById('foo') or getElementById("foo")
     for m in re.finditer(r'getElementById\(["\']([^"\']+)["\']\)', js):
         ids.add(m.group(1))
-    # querySelector('#foo') — only bare #id selectors
     for m in re.finditer(r'querySelector\(["\']#([A-Za-z0-9_-]+)["\']\)', js):
         ids.add(m.group(1))
     return ids
+
+
+def _extract_js_queried_ids_with_positions(js: str) -> list[tuple[str, int]]:
+    """Return [(id, start_pos)] for getElementById/querySelector('#id')."""
+    out: list[tuple[str, int]] = []
+    for m in re.finditer(r'getElementById\(["\']([^"\']+)["\']\)', js):
+        out.append((m.group(1), m.start()))
+    for m in re.finditer(r'querySelector\(["\']#([A-Za-z0-9_-]+)["\']\)', js):
+        out.append((m.group(1), m.start()))
+    return out
 
 
 def _extract_js_toggled_classes(js: str) -> set[str]:
@@ -166,10 +197,27 @@ def _extract_js_toggled_classes(js: str) -> set[str]:
     for m in re.finditer(
         r'classList\.(?:add|remove|toggle)\(["\']([^"\']+)["\']\)', js
     ):
-        # May be space-separated multiple classes
         for cls in m.group(1).split():
             classes.add(cls)
     return classes
+
+
+def _extract_js_toggled_classes_with_positions(js: str) -> list[tuple[str, int]]:
+    """Return [(class_string, start_pos)]; class_string may contain space-separated classes."""
+    out: list[tuple[str, int]] = []
+    for m in re.finditer(
+        r'classList\.(?:add|remove|toggle)\(["\']([^"\']+)["\']\)', js
+    ):
+        out.append((m.group(1), m.start()))
+    return out
+
+
+def _extract_localstorage_get_with_positions(js: str) -> list[tuple[str, int]]:
+    """Return [(key, start_pos)] for localStorage.getItem."""
+    out: list[tuple[str, int]] = []
+    for m in re.finditer(r'localStorage\.getItem\(["\']([^"\']+)["\']\)', js):
+        out.append((m.group(1), m.start()))
+    return out
 
 
 def _extract_css_defined_classes(css: str) -> set[str]:
@@ -221,8 +269,9 @@ _BASE_VARS = {
     "--space-xs", "--space-sm", "--space-md", "--space-lg", "--space-xl",
 }
 
+# Sass/SCSS-only functions (invalid in plain CSS). Exclude rgba/hsla — those are valid in plain CSS.
 _SCSS_FUNCTIONS = re.compile(
-    r'\b(darken|lighten|mix|saturate|desaturate|rgba|hsla|adjust-hue)\s*\('
+    r'\b(darken|lighten|mix|saturate|desaturate|adjust-hue)\s*\('
 )
 
 
@@ -236,11 +285,25 @@ def validate_project(workdir: str) -> list[dict]:
     """
     issues: list[dict] = []
 
-    def error(check: str, msg: str):
-        issues.append({"check": check, "severity": "error", "message": msg})
+    def error(check: str, msg: str, file: str | None = None, snippet: str | None = None, fix_file: str | None = None):
+        issue = {"check": check, "severity": "error", "message": msg}
+        if file is not None:
+            issue["file"] = file
+        if snippet is not None:
+            issue["snippet"] = snippet
+        if fix_file is not None:
+            issue["fix_file"] = fix_file
+        issues.append(issue)
 
-    def warning(check: str, msg: str):
-        issues.append({"check": check, "severity": "warning", "message": msg})
+    def warning(check: str, msg: str, file: str | None = None, snippet: str | None = None, fix_file: str | None = None):
+        issue = {"check": check, "severity": "warning", "message": msg}
+        if file is not None:
+            issue["file"] = file
+        if snippet is not None:
+            issue["snippet"] = snippet
+        if fix_file is not None:
+            issue["fix_file"] = fix_file
+        issues.append(issue)
 
     html_path = os.path.join(workdir, "index.html")
 
@@ -322,87 +385,143 @@ def validate_project(workdir: str) -> list[dict]:
         )
 
     # ── 6. Inline event handlers ─────────────────────────────────────────────
-    for handler in analyzer.inline_handlers:
+    inline_pattern = re.compile(r"\bon\w+\s*=", re.IGNORECASE)
+    inline_matches = list(inline_pattern.finditer(html))
+    for idx, handler in enumerate(analyzer.inline_handlers):
+        pos = inline_matches[idx].start() if idx < len(inline_matches) else None
+        snippet = _snippet(html, start_pos=pos, context_lines=2) if pos is not None else ""
         error(
             "inline_handlers",
             f"Inline event handler found in HTML: {handler}. "
             "All events must be bound in JS via addEventListener.",
+            file="index.html",
+            snippet=snippet or None,
         )
 
     # ── 7. Button accessibility ──────────────────────────────────────────────
+    button_positions = [m.start() for m in re.finditer(r"<button\b", html, re.IGNORECASE)]
     for i, btn in enumerate(analyzer.buttons):
         if not btn["text"] and not btn["aria_label"]:
+            pos = button_positions[i] if i < len(button_positions) else None
+            snippet = _snippet(html, start_pos=pos, context_lines=2) if pos is not None else ""
             error(
                 "button_accessibility",
                 f"Button #{i + 1} has no visible text and no aria-label attribute.",
+                file="index.html",
+                snippet=snippet or None,
             )
 
     # ── 8. Label/input pairing ───────────────────────────────────────────────
     for for_val in analyzer.label_fors:
         if for_val not in analyzer.input_ids:
+            m = re.search(rf'\bfor\s*=\s*["\']?' + re.escape(for_val) + r'["\']?', html, re.IGNORECASE)
+            snippet = _snippet(html, start_pos=m.start(), context_lines=2) if m else ""
             error(
                 "label_input_pairing",
                 f'<label for="{for_val}"> has no matching input/select/textarea with id="{for_val}".',
+                file="index.html",
+                snippet=snippet or None,
             )
 
     # ── 9. h1 outside .container ─────────────────────────────────────────────
     if analyzer.h1_outside_container:
+        m = re.search(r"<h1\b", html, re.IGNORECASE)
+        snippet = _snippet(html, start_pos=m.start(), context_lines=2) if m else ""
         error(
             "content_outside_container",
             "<h1> appears outside .container. All visible content must be inside .container.",
+            file="index.html",
+            snippet=snippet or None,
         )
 
-    # ── 10. JS → HTML id cross-reference ──────────────────────────────────────
-    if js:
-        queried_ids = _extract_js_queried_ids(js)
-        for qid in queried_ids:
+    # ── 10. JS → HTML id cross-reference (per file, fix_file=index.html) ─────
+    set_keys_all: set[str] = set()
+    for js_path in js_files:
+        with open(js_path, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        sk, _ = _extract_localstorage_keys(content)
+        set_keys_all |= sk
+
+    for js_path in js_files:
+        rel_js = os.path.relpath(js_path, workdir).replace("\\", "/")
+        content = _read(js_path)
+        for qid, pos in _extract_js_queried_ids_with_positions(content):
             if qid not in analyzer.ids:
+                snippet = _snippet(content, start_pos=pos, context_lines=2)
                 error(
                     "js_dom_reference",
                     f'JS queries id="{qid}" but no element with that id exists in index.html.',
+                    file=rel_js,
+                    snippet=snippet,
+                    fix_file="index.html",
                 )
 
-    # ── 11. JS classList → CSS class cross-reference ──────────────────────────
-    if js and css:
-        toggled = _extract_js_toggled_classes(js)
+    # ── 11. JS classList → CSS class cross-reference (per file) ───────────────
+    if css and css_files:
         defined = _extract_css_defined_classes(css)
-        for cls in toggled:
-            if cls not in defined:
-                error(
-                    "js_css_class_reference",
-                    f'JS toggles class "{cls}" via classList but ".{cls}" is not defined in any CSS file.',
-                )
+        rel_css = os.path.relpath(css_files[0], workdir).replace("\\", "/")
+        for js_path in js_files:
+            rel_js = os.path.relpath(js_path, workdir).replace("\\", "/")
+            content = _read(js_path)
+            for class_str, pos in _extract_js_toggled_classes_with_positions(content):
+                for cls in class_str.split():
+                    if cls not in defined:
+                        snippet = _snippet(content, start_pos=pos, context_lines=2)
+                        error(
+                            "js_css_class_reference",
+                            f'JS toggles class "{cls}" via classList but ".{cls}" is not defined in any CSS file.',
+                            file=rel_js,
+                            snippet=snippet,
+                            fix_file=rel_css,
+                        )
+                        break  # one issue per match
 
-    # ── 12. localStorage key consistency ──────────────────────────────────────
-    if js:
-        set_keys, get_keys = _extract_localstorage_keys(js)
-        for key in get_keys:
-            if key not in set_keys:
+    # ── 12. localStorage key consistency (per file) ───────────────────────────
+    for js_path in js_files:
+        rel_js = os.path.relpath(js_path, workdir).replace("\\", "/")
+        content = _read(js_path)
+        for key, pos in _extract_localstorage_get_with_positions(content):
+            if key not in set_keys_all:
+                snippet = _snippet(content, start_pos=pos, context_lines=2)
                 warning(
                     "localstorage_keys",
                     f'localStorage.getItem("{key}") is called but localStorage.setItem("{key}") '
                     "was never found. Possible key name typo.",
+                    file=rel_js,
+                    snippet=snippet,
                 )
 
-    # ── 13. CSS: no SCSS functions ────────────────────────────────────────────
-    if css:
-        for m in _SCSS_FUNCTIONS.finditer(css):
-            line_no = css[: m.start()].count("\n") + 1
+    # ── 13. CSS: no SCSS functions (per file) ─────────────────────────────────
+    for css_path in css_files:
+        content = _read(css_path)
+        rel_css = os.path.relpath(css_path, workdir).replace("\\", "/")
+        for m in _SCSS_FUNCTIONS.finditer(content):
+            snippet = _snippet(content, start_pos=m.start(), context_lines=2)
             error(
                 "css_scss_functions",
                 f'CSS: "{m.group(0)}" is a Sass/SCSS function and is invalid in plain CSS.',
+                file=rel_css,
+                snippet=snippet,
             )
 
-    # ── 14. CSS: no redefinition of base variables ────────────────────────────
-    if css:
-        root_blocks = re.findall(r':root\s*\{([^}]*)\}', css, re.DOTALL)
-        for block in root_blocks:
-            for var in re.findall(r'(--[A-Za-z][A-Za-z0-9_-]*)\s*:', block):
+    # ── 14. CSS: no redefinition of base variables (per file) ───────────────────
+    for css_path in css_files:
+        content = _read(css_path)
+        rel_css = os.path.relpath(css_path, workdir).replace("\\", "/")
+        for block_m in re.finditer(r':root\s*\{([^}]*)\}', content, re.DOTALL):
+            block = block_m.group(1)
+            for var_m in re.finditer(r'(--[A-Za-z][A-Za-z0-9_-]*)\s*:', block):
+                var = var_m.group(1)
                 if var in _BASE_VARS:
+                    # Position of var in full content
+                    pos = block_m.start(1) + var_m.start()
+                    snippet = _snippet(content, start_pos=pos, context_lines=2)
                     error(
                         "css_base_var_redefinition",
                         f'CSS redefines base variable "{var}" in :root. '
                         "These are provided by the base stylesheet — remove the redefinition.",
+                        file=rel_css,
+                        snippet=snippet,
                     )
 
     # ── 15. JS syntax via Node.js ─────────────────────────────────────────────
@@ -411,6 +530,14 @@ def validate_project(workdir: str) -> list[dict]:
             if os.path.exists(js_path):
                 node_error = _check_node_syntax(js_path)
                 if node_error:
-                    error("js_syntax", f"{os.path.basename(js_path)} has a syntax error:\n{node_error}")
+                    content = _read(js_path)
+                    snippet = _snippet(content, line_no=1, context_lines=4)
+                    rel_js = os.path.relpath(js_path, workdir).replace("\\", "/")
+                    error(
+                        "js_syntax",
+                        f"{os.path.basename(js_path)} has a syntax error:\n{node_error}",
+                        file=rel_js,
+                        snippet=snippet,
+                    )
 
     return issues
