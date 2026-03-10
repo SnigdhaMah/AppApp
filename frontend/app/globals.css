@@ -127,6 +127,10 @@ body {
   cursor: default;
 }
 
+.nav-text {
+  font-weight: 100;
+}
+
 /* ── Main / hero ── */
 .page {
   position: relative;
