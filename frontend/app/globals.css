@@ -127,6 +127,10 @@ body {
   cursor: default;
 }
 
+.nav-text {
+  font-weight: 100;
+}
+
 /* ── Main / hero ── */
 .page {
   position: relative;
@@ -146,7 +150,7 @@ body {
   letter-spacing: -0.025em;
   line-height: 1;
   color: white;
-  margin-bottom: 1.5rem;
+  margin-bottom: 3.5rem;
 }
 
 .hero-title sup {
@@ -160,7 +164,7 @@ body {
   font-size: clamp(1rem, 2.2vw, 1.5rem);
   color: rgba(255, 255, 255, 0.7);
   line-height: 1.65;
-  margin-bottom: 3.5rem;
+  margin-bottom: 1.5rem;
   font-weight: 300;
 }
 
@@ -197,7 +201,9 @@ body {
 }
 
 .build-btn {
-  position: absolute;
+  /* position: absolute; */
+  margin-top: 1rem;
+  justify-self: flex-end;
   bottom: 0.9rem;
   right: 0.9rem;
   display: flex;
