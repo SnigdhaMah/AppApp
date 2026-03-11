@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code and branded style template
 COPY main.py agent.py validate.py s3_upload.py run_local.py run_local_complex.py ./
 COPY templates/ ./templates/
+COPY assets/ ./assets/
 
 # Run as non-root for ECS (optional but recommended)
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

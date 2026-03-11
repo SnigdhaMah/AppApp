@@ -76,8 +76,8 @@ def run_forever() -> None:
             update_job(job_id, status="running", step="expanding", progress=5)
             expanded_spec = expand_request(prompt)
             update_job(job_id, step="planning", progress=10)
-            build_plan = plan_build(expanded_spec)
-            result_url = build_app(job_id, build_plan, update_job)
+            build_brief = plan_build(expanded_spec)
+            result_url = build_app(job_id, build_brief, update_job, user_prompt=prompt)
             update_job(
                 job_id,
                 status="complete",

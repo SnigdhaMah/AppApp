@@ -267,6 +267,16 @@ cd infra
 npx cdk deploy --outputs-file ../outputs.json
 ```
 
+**Important (frontend / localhost):** When you use the frontend (e.g. at localhost) to create jobs, the **worker runs on ECS**, not on your machine. The worker must have an LLM API key. Pass it at deploy time so the ECS task gets it:
+
+```bash
+cd infra
+npx cdk deploy -c OPENAI_API_KEY=sk-your-key-here
+# Or with Gemini: -c GEMINI_API_KEY=your-gemini-key
+```
+
+After changing the API key you must redeploy (e.g. `npx cdk deploy -c OPENAI_API_KEY=sk-...` again, or use `--hotswap` for faster updates).
+
 Or in the **AWS Console**:
 
 - **API URL:** CloudFormation → **BuildAppsStack** → **Outputs** → `ApiUrl` or `BuildAppsApiEndpoint...`
@@ -294,7 +304,7 @@ Or in the **AWS Console**:
 - **“Unable to locate credentials”:** Run `aws configure` (or with `--profile build-apps-team`) and check `aws sts get-caller-identity`.
 - **Frontend can’t reach API:** Ensure `NEXT_PUBLIC_API_URL` in `frontend/.env.local` has no trailing slash and matches the stack’s API URL.
 - **Jobs stuck in “queued”:** The ECS service might have no running tasks, or the worker might be crashing. Check ECS → Cluster → Service → **Tasks** and **Logs** (CloudWatch log group `/ecs/build-apps-worker`).
-- **Worker needs an API key:** The ECS task definition must have `OPENAI_API_KEY` (or `GEMINI_API_KEY`) set. I can add it via Console (new task definition revision) or Secrets Manager.
+- **Worker needs an API key (e.g. when using frontend on localhost):** Jobs from the frontend are processed by the ECS worker, which needs `OPENAI_API_KEY` or `GEMINI_API_KEY`. Redeploy with the key: `cd infra && npx cdk deploy -c OPENAI_API_KEY=sk-your-key`. For production, use Secrets Manager instead of context.
 - **“Codex CLI not found” (local, USE_CODEX=1):** The Python SDK does not ship the Codex binary; it expects it to be installed or provided. Options: **(1)** Install the Codex CLI (e.g. [Codex app for Windows](https://developers.openai.com/codex/app/windows) or [CLI install](https://developers.openai.com/codex/cli)), then in `worker/.env` set `CODEX_PATH_OVERRIDE` to the full path to `codex.exe` (or put `codex` on your PATH). **(2)** Or use OpenAI instead: remove or comment out `USE_CODEX=1` and set `OPENAI_API_KEY` (or `API_KEY`) so the worker uses gpt-4o-mini.
 
 If something isn’t covered here, just ping me

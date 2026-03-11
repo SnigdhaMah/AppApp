@@ -25,7 +25,11 @@ COMPLEX_PROMPT = """Build a single-page Pomodoro timer app with:
 def mock_update_job(job_id: str, **kwargs: object) -> None:
     step = kwargs.get("step", "")
     progress = kwargs.get("progress", 0)
-    print(f"  [{progress}%] {step}")
+    duration = kwargs.get("duration_seconds")
+    if duration is not None:
+        print(f"  [100%] {step} — {duration}s")
+    else:
+        print(f"  [{progress}%] {step}")
 
 
 def main() -> None:
@@ -34,11 +38,11 @@ def main() -> None:
     provider = "Codex" if os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes") else "OpenAI/Gemini"
     print(f"Complex test (using {provider})")
     print(f"Job ID: {job_id}\n")
-    print("Running agent (expand → plan → build)...")
+    print("Running agent (expand -> plan -> build)...")
     try:
         expanded_spec = expand_request(prompt)
-        build_plan = plan_build(expanded_spec)
-        result_url = build_app(job_id, build_plan, mock_update_job)
+        build_brief = plan_build(expanded_spec)
+        result_url = build_app(job_id, build_brief, mock_update_job, user_prompt=prompt)
         print(f"\nDone. Result: {result_url}")
         print(f"Open: output/{job_id}/index.html in your browser.")
     except Exception as e:

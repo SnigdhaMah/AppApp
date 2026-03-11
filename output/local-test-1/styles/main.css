@@ -1,36 +1,27 @@
+/* Base branded styles */
 /* Branded base template — applied to every generated app. Do not remove. */
-/* Default: dark theme with red/purple accent. Override only if the brief asks for light/medical. */
 
 :root {
-    /* Surfaces — dark default */
-    --bg: #0f0f12;
-    --surface: #1a1a1f;
-    --surface-hover: #242429;
-    /* Light alternatives (use only when brief explicitly requests light theme) */
-    --bg-warm: #faf8f5;
-    --surface-warm: #fffefb;
-    --accent-strong: #a855f7;
+    /* Surfaces */
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-hover: #fafafa;
     /* Text */
-    --text: #f4f4f5;
-    --text-muted: #a1a1aa;
-    --text-dark: #f4f4f5;
-    /* Accent (primary actions) — red or purple; default purple */
-    --accent: #a855f7;
-    --accent-hover: #9333ea;
+    --text: #1d1d1f;
+    --text-muted: #6e6e73;
+    /* Accent (primary actions, links) */
+    --accent: #0071e3;
+    --accent-hover: #0077ed;
     --accent-text: #ffffff;
     /* Borders & effects */
-    --border: #27272a;
-    --border-hover: #3f3f46;
+    --border: #e5e5ea;
+    --border-hover: #d2d2d7;
     --radius: 12px;
     --radius-sm: 8px;
     --radius-lg: 20px;
-    --radius-pill: 9999px;
-    --shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
-    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
-    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.4);
-    --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.25);
-    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.2);
-    --gradient-subtle: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, transparent 100%);
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    --shadow-hover: 0 4px 12px rgba(0, 0, 0, 0.08);
+    --shadow-lg: 0 8px 30px rgba(0, 0, 0, 0.12);
     /* Spacing */
     --space-xs: 6px;
     --space-sm: 12px;
@@ -77,13 +68,6 @@ body {
 }
 
 .navbar-logo svg {
-    display: block;
-}
-
-.navbar-logo img {
-    width: 28px;
-    height: 28px;
-    object-fit: contain;
     display: block;
 }
 
@@ -164,11 +148,6 @@ button:hover {
 
 button:active {
     transform: translateY(0);
-}
-
-button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
 }
 
 button.secondary {
@@ -276,4 +255,146 @@ p {
 p.muted {
     color: var(--text-muted);
     font-size: 0.875rem;
+}
+
+/* App-specific styles */
+@import url("https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap");
+
+* {
+    box-sizing: border-box;
+}
+
+body, html {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--bg);
+    color: var(--text);
+}
+
+h1 {
+    font-weight: 700;
+    font-size: 2rem;
+    color: var(--text);
+    margin-bottom: var(--space-md);
+}
+
+header {
+    padding-bottom: var(--space-md);
+    text-align: center;
+}
+
+.container {
+    max-width: 600px;
+    margin: 0 auto;
+    padding: var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.card {
+    background-color: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: var(--space-md);
+    transition: all 0.3s ease;
+}
+
+button {
+    font-family: inherit;
+    font-size: 1rem;
+    font-weight: 500;
+    padding: var(--space-sm) var(--space-lg);
+    border: none;
+    border-radius: var(--radius-sm);
+    background-color: var(--accent);
+    color: var(--accent-text);
+    cursor: pointer;
+    transition: background-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+button:hover {
+    background-color: var(--accent-hover);
+}
+
+button.primary {
+    background-color: var(--accent);
+    color: var(--accent-text);
+}
+
+button.secondary {
+    background-color: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+}
+
+button.ghost {
+    background-color: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+}
+
+button:focus {
+    outline: none;
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.3);
+}
+
+input, select, textarea {
+    font-family: inherit;
+    font-size: 1rem;
+    padding: var(--space-sm);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    width: 100%;
+}
+
+input:focus, select:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.1);
+}
+
+label {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-bottom: var(--space-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+ul, ol {
+    list-style: none;
+    padding: 0;
+    margin-bottom: var(--space-lg);
+}
+
+li {
+    padding: var(--space-md);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: var(--space-lg);
+    gap: var(--space-md);
+}
+
+@media (max-width: 768px) {
+    .container {
+        padding: var(--space-sm);
+    }
+
+    footer {
+        flex-direction: column;
+    }
 }

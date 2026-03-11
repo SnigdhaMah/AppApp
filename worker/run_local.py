@@ -20,18 +20,22 @@ from agent import build_app, expand_request, plan_build
 def mock_update_job(job_id: str, **kwargs: object) -> None:
     step = kwargs.get("step", "")
     progress = kwargs.get("progress", 0)
-    print(f"  [{progress}%] {step}")
+    duration = kwargs.get("duration_seconds")
+    if duration is not None:
+        print(f"  [100%] {step} — {duration}s")
+    else:
+        print(f"  [{progress}%] {step}")
 
 
 def main() -> None:
     prompt = sys.argv[1] if len(sys.argv) > 1 else "Build a simple counter with + and - buttons and display the count."
     job_id = "local-test-1"
     print(f"Prompt: {prompt}\nJob ID: {job_id}\n")
-    print("Running agent (expand → plan → build)...")
+    print("Running agent (expand -> plan -> build)...")
     try:
         expanded_spec = expand_request(prompt)
-        build_plan = plan_build(expanded_spec)
-        result_url = build_app(job_id, build_plan, mock_update_job)
+        build_brief = plan_build(expanded_spec)
+        result_url = build_app(job_id, build_brief, mock_update_job, user_prompt=prompt)
         print(f"\nDone. Result: {result_url}")
         print(f"Open: output/{job_id}/index.html in your browser to view the app.")
     except Exception as e:

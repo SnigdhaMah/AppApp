@@ -2,8 +2,10 @@
 import json
 import os
 import re
-import tempfile
 import shutil
+import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor
 from validate import validate_project
 from s3_upload import upload_folder_to_s3
 
@@ -12,48 +14,229 @@ S3_BUCKET = os.environ.get("APPS_BUCKET", "").strip()
 PUBLIC_BASE_URL = (os.environ.get("PUBLIC_BASE_URL") or "").rstrip("/")
 LOCAL_OUTPUT_DIR = os.environ.get("LOCAL_OUTPUT_DIR", "output").strip()
 
-# OpenAI model (e.g. gpt-4o for better code, gpt-4o-mini for faster/cheaper)
-OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+# Per-step OpenAI models (expand = small/fast, plan & build = larger). Override with OPENAI_MODEL_* env vars.
+# USE_4O=1 forces plan and build to gpt-4o for cheaper development (5.x models are expensive).
+USE_4O = os.environ.get("USE_4O", "").strip().lower() in ("1", "true", "yes")
+_DEFAULT_PLAN = "gpt-4o" if USE_4O else "gpt-5"
+_DEFAULT_BUILD = "gpt-4o" if USE_4O else "gpt-5.2"
+OPENAI_MODEL_EXPAND = (os.environ.get("OPENAI_MODEL_EXPAND") or os.environ.get("OPENAI_MODEL") or "gpt-4o").strip()
+OPENAI_MODEL_PLAN = (os.environ.get("OPENAI_MODEL_PLAN") or os.environ.get("OPENAI_MODEL") or _DEFAULT_PLAN).strip()
+OPENAI_MODEL_BUILD = (os.environ.get("OPENAI_MODEL_BUILD") or os.environ.get("OPENAI_MODEL") or _DEFAULT_BUILD).strip()
 
-MAX_ITERS = 3
+# Max validate+fix iterations. Edit-based fix is lightweight so you can increase this (e.g. MAX_FIX_ITERS=5).
+_raw_max_fix = (os.environ.get("MAX_FIX_ITERS") or "3").strip()
+try:
+    MAX_ITERS = max(1, min(20, int(_raw_max_fix)))
+except ValueError:
+    MAX_ITERS = 3
+
+# Snippet-based fix: send only affected files and ask for edits (old_string/new_string).
+# When unset or "0", fix step uses full-codebase prompt and full file array.
+# On by default: use edit-based fix (affected files + edits). Set USE_EDIT_BASED_FIX=0 to use full-codebase fix.
+USE_EDIT_BASED_FIX = os.environ.get("USE_EDIT_BASED_FIX", "1").strip().lower() in ("1", "true", "yes")
+
+# When set, split initial codegen into 3 parallel LLM calls (markup, styles, scripts), then merge and run validate+fix once.
+PARALLEL_BUILD = os.environ.get("PARALLEL_BUILD", "").strip().lower() in ("1", "true", "yes")
 
 SYSTEM_RULES = """
-You are generating a small static web app.
-Constraints:
-- Output must be valid JSON with shape: {"files":[{"path":"...","content":"..."}]}
-- Only create these files: index.html, style.css, script.js, data.json (optional)
-- Use relative paths in HTML: ./style.css and ./script.js
-- Do NOT use external CDNs or remote scripts.
-- Keep it simple and functional.
-- Data storage: prefer localStorage OR a tiny inline data.json.
+You are an expert front-end engineer generating a realistic, product-grade frontend prototype.
 
-Design — a branded base stylesheet is automatically prepended to style.css. You MUST:
-- Use the existing CSS variables in your style.css: --bg, --surface, --text, --text-muted, --accent, --accent-hover, --accent-text, --border, --radius, --radius-sm, --shadow, --space-xs, --space-sm, --space-md, --space-lg, --space-xl. Do NOT redefine these in :root.
-- A branded navbar (logo + "Build Apps") is automatically injected at the top of the page. Do not add your own navbar or header. Use class .container for the main content wrapper (already styled; it appears below the navbar). Use semantic HTML: main, section, label, button, input, etc.
-- In style.css output ONLY app-specific rules (e.g. layout for your sections, IDs, or small overrides). Do not repeat body, .container, or global button/input styles from the base. Plain CSS only — no Sass/SCSS (no darken(), no mixins).
-- Result: every app shares the same branded look; your CSS only adds what is unique to this app.
+## Architecture Requirements
+- Do not compress the app into a minimal demo.
+- Build a realistic frontend with separated concerns.
+- Use multiple CSS and JS files when allowed.
+- HTML should define app shell, sections, and templates.
+- JS must separate state, rendering, events, and utilities.
+- CSS must separate layout, components, and responsive behavior.
+
+## Minimum Complexity
+- At least 3 major UI sections or views
+- At least 5 reusable components/patterns
+- At least 8 distinct interactive behaviors
+- At least 1 derived state view
+- At least 1 empty state and 1 populated state
+- At least 2 responsive layout changes
+- At least 1200 lines total across all generated files unless the brief clearly requires less
+
+## Output Format
+- Return ONLY valid JSON with shape: {"files":[{"path":"...","content":"..."}]}
+- Allowed paths: index.html, data.json, styles/, scripts/, and assets/.
+- Use relative paths in HTML.
+- Do NOT use external CDNs or remote scripts — all logic must be self-contained.
+
+## HTML — structure and content rules:
+- ALL visible content (h1, sections, divs, everything) must be placed INSIDE .container.
+  Never place any element between the navbar and .container — the first child of <body>
+  after the navbar must always be the .container (or a wrapper that contains it).
+- Use semantic elements: <main>, <section>, <article>, <aside>, <dialog>, <details>, <figure>.
+- Accessibility: ARIA roles/labels on interactive elements, keyboard-navigable UI,
+  <label for="x"> on every input with a matching id="x", role="alert" for dynamic messages.
+- Use <template> tags for repeating UI patterns rendered by JS.
+- Support responsive layout from the start (viewport meta, fluid containers).
+- Do NOT use inline event handlers (onclick, onchange, oninput, etc.).
+  ALL event binding must be done in JS via addEventListener.
+- Every <button> must have either visible text content or an aria-label attribute.
+
+## JavaScript — write production-quality JS:
+- Do NOT use <script type="module"> unless the script contains actual ES module
+  import statements. For self-contained scripts, use a plain <script> tag.
+  type="module" is blocked by browsers on file:// URLs and will silently break the app.
+- Every id referenced via getElementById or querySelector MUST exist in index.html.
+  Never query an element that isn't in the DOM.
+- Every CSS class toggled via classList.add/remove/toggle MUST have a corresponding
+  rule in a CSS file. Never toggle a class that has no styles defined.
+- localStorage.getItem('key') and localStorage.setItem('key') must use identical key
+  strings. Never read a key that was never written.
+- Never derive state by reading from the DOM. All state must live in JS variables
+  or a state object. The DOM is output-only — always read from state, write to DOM,
+  never the reverse. Example of what NOT to do:
+    BAD:  this.count = document.getElementById('display').textContent + 1;
+    GOOD: this.count += 1; then update the DOM from this.count.
+- Always guard localStorage reads against null before arithmetic. Use:
+    parseInt(localStorage.getItem('key') ?? '0', 10) || 0
+  Never pass null, undefined, or an empty string into parseInt, Number(), or
+  any arithmetic operation — this produces NaN which silently corrupts all state.
+- After any state mutation, validate that the new value is a finite number before
+  saving or rendering: if (!Number.isFinite(this.count)) this.count = 0;
+- Use modern ES6+ features: classes, async/await, destructuring, WeakMap, generators, etc.
+- Structure code with clear separation: data layer, state management, rendering, events. **Crucially, ensure event handlers trigger state updates, and state updates trigger re-renders.**
+- Implement rich interactivity: drag-and-drop, requestAnimationFrame animations, canvas,
+  Web Audio API, real-time filtering/search, keyboard shortcuts, undo/redo — as warranted.
+- Handle edge cases: empty states, input validation with clear error feedback,
+  loading indicators, debounced inputs.
+- Write helper utilities (uuid(), deepClone(), formatDate()) inline — no placeholders.
+
+## CSS & UX — design like a modern iOS/Android App, not a webpage:
+- Layout: Use app-like paradigms. Do not just stack inputs in a column. Use bottom tab bars for navigation, floating action buttons (FABs) for primary actions, and horizontal scrolling carousels for lists where appropriate.
+- Hierarchy: Use a large, bold hero element for the primary metric/focus (font-size >= 4rem, font-weight >= 700). Make the primary call-to-action massive and prominent at the bottom of the screen.
+- Interactions: Build hover/active states that mimic physical touch (scale down slightly, change shadow). Add micro-animations and transitions to all state changes.
+- Empty states: Build beautiful, friendly empty states with descriptive text and clear calls to action when lists are empty.
+- Use CSS custom properties (--bg, --surface, --text, --text-muted, --accent,
+  --accent-hover, --accent-text, --border, --radius, --radius-sm, --radius-lg,
+  --radius-pill, --shadow, --shadow-hover, --shadow-lg, --shadow-card, --shadow-inset,
+  --gradient-subtle, --space-xs, --space-sm, --space-md, --space-lg, --space-xl).
+  For a warmer or bolder look (avoid cold white): --bg-warm, --surface-warm, --accent-strong are available.
+  Do NOT redefine these in :root — they are provided by the base stylesheet.
+- Do NOT redefine body, .container, or global button/input styles from the base.
+- Output ONLY app-specific rules. Every key element must have explicit sizing:
+  specify font-size, padding, and display mode — never leave hero elements unstyled.
+- **Tabs / bottom nav:** Inactive tabs must be ghost or muted (e.g. color: var(--text-muted), no fill).
+  Only the active tab uses accent background or strong weight. Never style every tab as primary (solid accent).
+- **Depth and polish:** Use layered shadows for cards (e.g. --shadow-card or --shadow-lg). Add subtle
+  transitions (e.g. transition: box-shadow 0.2s, transform 0.2s) on interactive elements.
+- **Inputs and controls:** Range sliders and all inputs must be styled (track, thumb, focus) using design
+  tokens; avoid raw browser-default appearance.
+- **Typography:** Clear type scale — hero ≥ 4rem, section titles ≥ 1.25rem, labels smaller and muted.
+  Use letter-spacing and font-weight for hierarchy, not only size.
+- Primary display values (counters, scores, results) must use font-size ≥ 4rem.
+- All buttons must have enough padding and min-width that their labels never wrap.
+- Define explicit button hierarchy: exactly ONE button per view/group is primary
+  (accent background). All others must be secondary (outlined) or ghost. Never
+  style two sibling buttons as primary — it destroys hierarchy.
+- Button groups must always use a flex container with gap: var(--space-sm).
+  Never let a button group stack vertically on desktop. Set flex-wrap: wrap only
+  as a mobile fallback, never as the default layout.
+- Flex containers that allow wrapping MUST set row-gap explicitly (using
+  --space-sm or larger) in addition to column gap. Never rely on gap shorthand
+  alone — wrapped rows will have no vertical breathing room without row-gap.
+- Use CSS Grid and Flexbox for layouts. Add @keyframes animations where meaningful.
+- Implement responsive breakpoints. App must work cleanly at 375px and 1200px widths.
+- Every CSS class toggled by JS must be defined here with actual property values.
+
+## Design System
+- **Theme (mandatory unless brief says otherwise):** You MUST use a **dark theme** with **red or purple** accent. Use dark --bg and --surface (e.g. #0f0f12, #1a1a1f), and --accent as red (e.g. #dc2626) or purple (e.g. #a855f7). Do NOT use white/light gray backgrounds or blue (#0071e3) as the primary accent. The base stylesheet injects dark defaults; do not override them to light/blue unless the brief explicitly requests a light or medical look.
+- A branded navbar (logo + "Build Apps") is auto-injected at the top — do not add your own.
+- Use class .container for the main content wrapper (already styled; appears below navbar).
+- The base stylesheet provides all design tokens. Layer your app-specific styles on top.
+
+## Visual Quality Bar — every app must meet these before output:
+- Clear visual hierarchy: one dominant hero element (the main value, CTA, or display).
+- The app title / h1 must be styled with font-weight ≥ 600 and font-size ≥ 1.25rem.
+  Never leave the title as plain unstyled body text.
+- Exactly ONE button per view is primary (accent bg). All others are secondary or ghost.
+- **Bottom nav / tabs:** Only the active tab is primary (accent or bold); inactive tabs are ghost or
+  muted (transparent background, color: var(--text-muted)). Never style all tabs as solid accent.
+- All button groups are in a single flex row — no stacking on desktop viewports.
+- Consistent spacing using only --space-* variables — no magic pixel numbers.
+- All interactive elements have hover and focus states defined in CSS.
+- No text or elements overflow or clip their container at any viewport width.
+- Only include UI elements (buttons, sections, inputs) that are in the build brief.
+  Do not invent extra controls (Help, Info, Settings) unless explicitly specified.
+- The app looks like it belongs in a modern SaaS product, not a browser default stylesheet.
+- Default MUST be dark theme with red or purple accents. Do not produce white/blue apps unless the brief explicitly requires a light or medical style.
+
+## Scope & Ambition
+- Build the FULL feature set implied by the request — no stubs, no TODOs, no placeholders.
+- If the app has multiple views/screens, implement all of them as JS-toggled sections.
+- If data visualization fits, draw it with <canvas> or inline SVG.
+- If the app involves lists or cards, implement sorting, filtering, and search.
+- Aim for an app a user would actually want to use daily.
 """
 
-# Expansion: product reasoning (what the app should be, features, what users care about)
-EXPANSION_SYSTEM = """You are a product expert. The user will give a short request for an app (e.g. "gym app", "todo app").
-Your job is to reason about:
-- What kind of app this is and what it should do.
-- What features are needed (think about what similar successful apps have).
-- What users usually care about for this type of app.
-- What core functionality must be included.
+# Expansion: deep product reasoning
+EXPANSION_SYSTEM = """You are a senior product manager and UX designer. The user will give a short request for an app.
 
-Output a clear, detailed product spec in plain text (a few short paragraphs or bullet points). The spec will be used by a planner to produce a build plan. Assume the app will be built as a single-page static site only: HTML, CSS, JavaScript, with localStorage or a small data.json. No backend, no auth, no external CDNs. Keep the scope achievable within those constraints."""
+Your job is to produce a thorough product specification covering:
 
-# Planning: turn expanded spec into a concrete build brief for the code generator
-PLANNING_SYSTEM = """You are a technical planner. You receive a product spec for a static web app and produce a single, detailed build brief.
-The brief will be given to a code generator that outputs only: index.html, style.css, script.js, and optionally data.json. No CDNs, no external scripts. Data: localStorage or inline data.json only.
+1. **Core purpose** — What problem does this solve? Who uses it and why?
+2. **Feature inventory** — List every feature the app should have, from primary to secondary. Think about what makes the best-in-class version of this app great.
+3. **User flows** — Describe the key interactions step by step (e.g. "User adds item → sees it in list → can edit inline → deletes with confirmation").
+4. **Data model** — What entities/objects need to be stored? What are their fields? How do they relate?
+5. **UI layout** — Describe the screens or sections, how they're organized, what's always visible vs. toggled. Design for a mobile-first APP feel, not a desktop webpage (e.g. use bottom nav bars, floating action buttons, full height views, cards instead of raw text).
+6. **Visual personality** — What should this app feel like to use? Describe the intended emotional quality (e.g. "satisfying and tactile like a physical counter", "calm and focused like a meditation tool", "energetic and gamified like a fitness tracker"). This will directly guide typography scale, animation style, and color usage decisions. Also give one sentence on **visual style** — so the planner can turn it into concrete CSS. **Default (use unless medical/clinical):** "Dark theme with red or purple accents" — dark backgrounds, red or purple for primary actions. Only use "light", "white", or "medical" style if the app domain explicitly requires it. State one sentence for visual style (e.g. "Dark theme with red and purple accents" or "Warm and inviting with soft shadows" if the request asks for light).
+7. **Delight details** — Small UX touches that make the app feel polished: keyboard shortcuts, animations, empty states, undo, smart defaults, progress indicators, etc.
 
-Your build brief must be concrete and complete so the generator can implement it. Include:
-- All main UI sections and screens (or single-page sections).
-- Every feature and behavior (e.g. add, remove, edit, persist).
-- Any specific UX details from the spec.
+Constraints: static site only (HTML/CSS/JS), no backend, no auth, localStorage or small data.json for persistence, no external CDNs.
 
-Write the brief as one clear instruction (one or two paragraphs, or a short bullet list). Do not output code. Do not repeat the tech constraints (the generator already knows them). Focus on what to build, not how to implement it."""
+**Conciseness**: Be specific but avoid repetition. State each requirement once in the most logical section. Do not restate the same features in multiple sections or produce long appendixes that duplicate earlier content. The planner will use this spec as the single source of truth.
+
+**Completeness check**: After writing the spec, re-read the original request and verify every sentence maps to at least one feature. Call out any requirement you omit and justify why. Never silently drop features."""
+
+# Planning: turn expanded spec into a concrete, concise build brief
+PLANNING_SYSTEM = """You are a senior front-end engineer acting as a technical planner. You receive a product spec and produce a **concise** build brief for a code generator. The spec is the source of truth for features and content; do not copy or restate long sections of the spec. Reference it (e.g. "Data model: see spec section 4") and add only what the generator needs to implement.
+
+Allowed outputs: index.html, data.json, files under styles/ and scripts/. No CDNs. Persistence via localStorage or data.json only.
+
+**Anti-repetition**: Do not paste the spec back into the brief. Do not add an "Appendix" or "Output" that repeats the spec. Keep each section to short bullets; no long paragraphs. If the spec already defines the data model or feature list, your brief need only name the keys/files and point to the spec for details.
+
+Include only:
+
+- **Required file tree**: explicitly list every file the generator must create.
+- **Component map**: list each component and which file owns it.
+- **Render flow**: list what file triggers initial render, what file owns state, and what file binds events.
+- **Architecture**: how the app is structured (e.g. single-page with JS-toggled sections, MVC pattern, event-driven state, etc.)
+- **HTML structure**: List sections, main containers, and <template> IDs. All content inside .container. Call out bottom nav, FAB, and key view sections; do not rewrite the spec's UI layout.
+- **State & data**: localStorage key names, initial seed shape, and re-render trigger (e.g. "state mutates → save() → bus.emit('state:changed') → renderRoute()"). One short paragraph plus key names.
+- **JS modules**: Which file owns bootstrap, state, render, events. List **element IDs** the JS will query (compact list). Do not re-describe every feature.
+- **Features**: Either "Implement all features in spec sections 2–3" or a short checklist (one line per feature area). No long re-enumeration.
+- **CSS inventory**: Theme tokens (--bg, --surface, --accent, etc.) and 5–10 key selectors with critical values (hero, tab bar, cards, buttons). Omit obvious or repeated rules.
+- **Visual spec from personality**: Translate the spec's **Visual personality** into 2–3 concrete CSS directives (e.g. "soft shadows and rounded corners" → use --shadow-lg, --radius-lg on cards; "calm and minimal" → muted palette, generous whitespace). Include these in the brief so the generator applies a consistent visual style.
+- **Visual impact**: Default MUST be dark theme: dark --bg/--surface, red or purple --accent. Specify in the brief: "Theme: dark (--bg #0f0f12, --surface #1a1a1f), accent red or purple (e.g. #a855f7 or #dc2626)." Only specify light/white/medical if the domain explicitly requires it. (2) At least one hero/focal area with stronger shadow or accent. (3) No white/blue default look.
+- **Tab bar / bottom nav**: If the app has a bottom nav or tab bar, the brief must specify its styling explicitly: container display flex, gap; active tab = background var(--accent), color var(--accent-text); inactive tabs = background transparent, color var(--text-muted) (ghost). Never specify that all tabs use the same primary style.
+- **Button hierarchy**: for every button group, name the ONE primary button and justify
+  why it is primary. All other buttons must be explicitly labelled secondary (outlined
+  border, no fill) or ghost (text only). Specify the exact flex container for each group:
+  display flex, flex-direction row, gap value, alignment, and whether any button is
+  full-width. Example: ".btn-group: display flex, flex-direction row, gap var(--space-sm),
+  align-items center — Increment=primary, Decrement=secondary, Reset=ghost".
+- **Brief discipline**: only include buttons and UI controls that are directly required
+  by the feature list. Do not add utility buttons (Help, Info, About, Settings) unless
+  the spec explicitly calls for them.
+- **Animations**: name every transition or @keyframes animation, what triggers it, and what properties it affects.
+- **Responsive breakpoints**: specify layout changes at 375px and any other breakpoints needed.
+- **Edge cases & polish**: empty states, validation rules, error messages, keyboard shortcuts, focus management.
+- **Prompt fidelity**: go through the original user request line by line and confirm every
+  explicit feature has a corresponding section in this brief. Never omit, merge, or silently
+  drop features. If a feature is intentionally out of scope, say so explicitly.
+- **Phase-based apps**: if the app has multiple phases or modes (e.g. work/break, round/rest,
+  active/paused), each phase must be:
+  - Visually distinct — different label, color, or background on the phase indicator
+  - Explicitly tracked in JS state with its own named variable
+  - Listed with its transition trigger (what causes the switch) and the exact consequence
+    (what changes in the UI, what resets, what plays/alerts)
+  - All phases must be implemented — never implement only the first phase and stub the rest.
+
+Write the brief as structured headings with short bullets. Do not output code. Do not duplicate the spec: reference it and add only implementation details (IDs, tokens, triggers). Aim for a brief that is shorter than the spec, not longer."""
 
 
 def _parse_json_response(text: str) -> dict:
@@ -88,6 +271,17 @@ CODEX_OUTPUT_SCHEMA = {
 }
 
 
+def _log_llm(name: str, sys_prompt: str, user_prompt: str, response: str) -> None:
+    if not os.environ.get("APPS_BUCKET"):
+        try:
+            print(f"\n{'='*80}\n=== AI LOG: {name} ===")
+            if sys_prompt:
+                print(f"SYSTEM:\n{sys_prompt}\n")
+            print(f"USER:\n{user_prompt}\n\n=== OUTPUT ===\n{response}\n{'='*80}\n")
+        except UnicodeEncodeError:
+            # Fallback for Windows console encoding issues with emojis/arrows
+            print(f"USER:\n{user_prompt.encode('ascii', 'replace').decode('ascii')}\n\n=== OUTPUT ===\n{response.encode('ascii', 'replace').decode('ascii')}\n{'='*80}\n")
+
 def call_llm(prompt: str) -> dict:
     """Call Codex, OpenAI, or Gemini API and return parsed JSON."""
     use_codex = os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes")
@@ -112,6 +306,29 @@ def call_llm(prompt: str) -> dict:
     )
 
 
+_codex_ready = False
+
+
+def _ensure_codex_ready() -> None:
+    """In container/CI: install Codex CLI binary and write auth from CODEX_AUTH_JSON if set."""
+    global _codex_ready
+    if _codex_ready:
+        return
+    from openai_codex_sdk import Codex
+
+    # Containers/ECS: SDK does not ship the binary; install it (idempotent).
+    if not (os.environ.get("CODEX_PATH_OVERRIDE") or "").strip():
+        try:
+            version = (os.environ.get("CODEX_CLI_VERSION") or "rust-v0.88.0-alpha.3").strip()
+            Codex.install(version=version)
+        except Exception:
+            pass  # may already be on PATH or installed
+    # Auth from env (e.g. ECS secret CODEX_AUTH_JSON) -> ~/.codex/auth.json
+    if os.environ.get("CODEX_AUTH_JSON"):
+        Codex.login_with_auth_json(overwrite=True)
+    _codex_ready = True
+
+
 def _codex_options() -> dict:
     """Build Codex options from env (e.g. CODEX_PATH_OVERRIDE for custom CLI path)."""
     opts = {}
@@ -126,24 +343,26 @@ def _call_codex(prompt: str) -> dict:
     import asyncio
     from openai_codex_sdk import Codex
 
+    _ensure_codex_ready()
     async def _run() -> dict:
         codex = Codex(_codex_options())
         thread = codex.start_thread({"skip_git_repo_check": True})
         full_prompt = f"{SYSTEM_RULES}\n\nUser request:\n{prompt}\n\nReturn JSON only with key 'files' (array of {{'path': '...', 'content': '...'}})."
         turn = await thread.run(full_prompt, {"output_schema": CODEX_OUTPUT_SCHEMA})
         raw = (turn.final_response or "").strip()
+        _log_llm("Codex (JSON)", SYSTEM_RULES, prompt, raw)
         return _parse_json_response(raw)
 
     return asyncio.run(_run())
 
 
-def _call_openai(prompt: str, api_key: str) -> dict:
+def _call_openai(prompt: str, api_key: str, model: str | None = None) -> dict:
     """Use OpenAI API with JSON mode."""
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=model or OPENAI_MODEL_BUILD,
         messages=[
             {"role": "system", "content": SYSTEM_RULES},
             {"role": "user", "content": prompt},
@@ -151,6 +370,7 @@ def _call_openai(prompt: str, api_key: str) -> dict:
         response_format={"type": "json_object"},
     )
     text = (response.choices[0].message.content or "").strip()
+    _log_llm("OpenAI (JSON)", SYSTEM_RULES, prompt, text)
     return _parse_json_response(text)
 
 
@@ -170,11 +390,12 @@ def _call_gemini(prompt: str, api_key: str) -> dict:
         ),
     )
     text = (response.text or "").strip()
+    _log_llm("Gemini (JSON)", SYSTEM_RULES, prompt, text)
     return _parse_json_response(text)
 
 
-def call_llm_text(system_prompt: str, user_message: str) -> str:
-    """Call LLM for plain-text response (expansion, planning). Uses same provider as call_llm."""
+def call_llm_text(system_prompt: str, user_message: str, *, model: str | None = None) -> str:
+    """Call LLM for plain-text response (expansion, planning). Uses same provider as call_llm. model only applies to OpenAI."""
     use_codex = os.environ.get("USE_CODEX", "").strip().lower() in ("1", "true", "yes")
     if use_codex:
         try:
@@ -186,7 +407,7 @@ def call_llm_text(system_prompt: str, user_message: str) -> str:
                 raise
     openai_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
     if openai_key:
-        return _call_openai_text(system_prompt, user_message, openai_key)
+        return _call_openai_text(system_prompt, user_message, openai_key, model=model)
     gemini_key = os.environ.get("GEMINI_API_KEY")
     if gemini_key:
         return _call_gemini_text(system_prompt, user_message, gemini_key)
@@ -195,18 +416,20 @@ def call_llm_text(system_prompt: str, user_message: str) -> str:
     )
 
 
-def _call_openai_text(system_prompt: str, user_message: str, api_key: str) -> str:
+def _call_openai_text(system_prompt: str, user_message: str, api_key: str, *, model: str | None = None) -> str:
     from openai import OpenAI
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
-        model=OPENAI_MODEL,
+        model=model or OPENAI_MODEL_PLAN,
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
     )
-    return (response.choices[0].message.content or "").strip()
+    text = (response.choices[0].message.content or "").strip()
+    _log_llm("OpenAI (Text)", system_prompt, user_message, text)
+    return text
 
 
 def _call_gemini_text(system_prompt: str, user_message: str, api_key: str) -> str:
@@ -218,31 +441,36 @@ def _call_gemini_text(system_prompt: str, user_message: str, api_key: str) -> st
         system_instruction=system_prompt,
     )
     response = model.generate_content(user_message)
-    return (response.text or "").strip()
+    text = (response.text or "").strip()
+    _log_llm("Gemini (Text)", system_prompt, user_message, text)
+    return text
 
 
 def _call_codex_text(system_prompt: str, user_message: str) -> str:
     import asyncio
     from openai_codex_sdk import Codex
 
+    _ensure_codex_ready()
     async def _run() -> str:
         codex = Codex(_codex_options())
         thread = codex.start_thread({"skip_git_repo_check": True})
         full_prompt = f"{system_prompt}\n\nUser:\n{user_message}"
         turn = await thread.run(full_prompt)
-        return (turn.final_response or "").strip()
+        text = (turn.final_response or "").strip()
+        _log_llm("Codex (Text)", system_prompt, user_message, text)
+        return text
 
     return asyncio.run(_run())
 
 
 def expand_request(user_prompt: str) -> str:
-    """Expand a short user request into a detailed product spec (features, what users care about)."""
-    return call_llm_text(EXPANSION_SYSTEM, user_prompt)
+    """Expand a short user request into a detailed product spec (features, what users care about). Uses OPENAI_MODEL_EXPAND (default gpt-4o) for OpenAI."""
+    return call_llm_text(EXPANSION_SYSTEM, user_prompt, model=OPENAI_MODEL_EXPAND)
 
 
 def plan_build(expanded_spec: str) -> str:
-    """Turn an expanded product spec into a concrete build brief for the code generator."""
-    return call_llm_text(PLANNING_SYSTEM, expanded_spec)
+    """Turn an expanded product spec into a concrete build brief for the code generator. Uses OPENAI_MODEL_PLAN (default gpt-5) for OpenAI."""
+    return call_llm_text(PLANNING_SYSTEM, expanded_spec, model=OPENAI_MODEL_PLAN)
 
 
 def _get_base_css() -> str:
@@ -263,6 +491,21 @@ def _get_navbar_html() -> str:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
     return ""
+
+
+def _copy_brand_assets(workdir: str) -> None:
+    """Copy branded logo SVGs from worker/assets/ into workdir/assets/ so every app has them."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    assets_src = os.path.join(base_dir, "assets")
+    assets_dst = os.path.join(workdir, "assets")
+    if not os.path.isdir(assets_src):
+        return
+    os.makedirs(assets_dst, exist_ok=True)
+    for name in ("logo.svg", "red_logo.svg"):
+        src = os.path.join(assets_src, name)
+        if os.path.isfile(src):
+            dst = os.path.join(assets_dst, name)
+            shutil.copy2(src, dst)
 
 
 def _inject_navbar(workdir: str) -> None:
@@ -286,83 +529,421 @@ def _inject_navbar(workdir: str) -> None:
             f.write(new_html)
 
 
+def _first_linked_css_path(workdir: str) -> str | None:
+    """Return the path (relative to workdir) of the first stylesheet linked from index.html, or None."""
+    index_path = os.path.join(workdir, "index.html")
+    if not os.path.isfile(index_path):
+        return None
+    with open(index_path, "r", encoding="utf-8", errors="replace") as f:
+        html = f.read()
+    # First <link rel="stylesheet" href="..."> (allow single or double quotes, optional whitespace)
+    match = re.search(r'<link\s+[^>]*rel\s*=\s*["\']stylesheet["\'][^>]*href\s*=\s*["\']([^"\']+\.css)["\']', html, re.IGNORECASE | re.DOTALL)
+    if not match:
+        match = re.search(r'<link\s+[^>]*href\s*=\s*["\']([^"\']+\.css)["\'][^>]*rel\s*=\s*["\']stylesheet["\']', html, re.IGNORECASE | re.DOTALL)
+    if not match:
+        return None
+    href = match.group(1).strip().lstrip("/").replace("\\", "/")
+    if not href:
+        return None
+    full = os.path.normpath(os.path.join(workdir, href))
+    if not os.path.isfile(full) or not full.startswith(os.path.normpath(workdir)):
+        return None
+    return os.path.relpath(full, workdir).replace("\\", "/")
+
+
 def _apply_style_template(workdir: str) -> None:
-    """Prepend branded base.css to style.css so every app uses the same design system."""
+    """Prepend branded base.css to the first CSS file linked from index.html (so the page loads it), else first CSS file found."""
     base_css = _get_base_css()
     if not base_css:
         return
-    style_path = os.path.join(workdir, "style.css")
-    if not os.path.exists(style_path):
-        with open(style_path, "w", encoding="utf-8") as f:
+
+    target_css = None
+    linked = _first_linked_css_path(workdir)
+    if linked:
+        target_css = os.path.join(workdir, linked)
+    if not target_css or not os.path.isfile(target_css):
+        target_css = None
+        for root, _, files in os.walk(workdir):
+            for name in files:
+                if name.endswith(".css"):
+                    target_css = os.path.join(root, name)
+                    break
+            if target_css:
+                break
+
+    if not target_css:
+        target_css = os.path.join(workdir, "style.css")
+        with open(target_css, "w", encoding="utf-8") as f:
             f.write(base_css)
         return
-    with open(style_path, "r", encoding="utf-8") as f:
+
+    with open(target_css, "r", encoding="utf-8") as f:
         app_css = f.read()
-    # Base first, then app-specific (app can override with same specificity)
-    combined = base_css.rstrip() + "\n\n/* App-specific styles */\n" + app_css.lstrip()
-    with open(style_path, "w", encoding="utf-8") as f:
-        f.write(combined)
+    # Prepend base only if design tokens are not actually defined. LLM often adds
+    # ":root {}" or "Base branded styles" comment without real token definitions.
+    # Require an actual token definition (e.g. --bg: #) so we don't skip when only var(--bg) appears.
+    has_tokens = "--bg: #" in app_css or "--bg: rgb" in app_css
+    if not has_tokens:
+        combined = "/* Base branded styles */\n" + base_css.rstrip() + "\n\n/* App-specific styles */\n" + app_css.lstrip()
+        with open(target_css, "w", encoding="utf-8") as f:
+            f.write(combined)
 
 
 def write_files(workdir: str, files: list[dict]) -> None:
-    allowed = {"index.html", "style.css", "script.js", "data.json"}
+    ALLOWED_PATH_PREFIXES = (
+        "index.html",
+        "data.json",
+        "styles/",
+        "scripts/",
+        "assets/",
+    )
+    if not isinstance(files, list):
+        if isinstance(files, dict) and "path" in files:
+            files = [files]
+        else:
+            files = []
+            
     for f in files:
+        if not isinstance(f, dict):
+            continue
         path = (f.get("path") or "").strip().lstrip("/")
-        if path not in allowed:
+        if not path.startswith(ALLOWED_PATH_PREFIXES):
             continue
         content = f.get("content") or ""
         full = os.path.join(workdir, path)
         os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
         with open(full, "w", encoding="utf-8") as fp:
             fp.write(content)
-    _apply_style_template(workdir)
+    _copy_brand_assets(workdir)
     _inject_navbar(workdir)
+    _apply_style_template(workdir)
 
 
-def build_app(job_id: str, user_prompt: str, update_job) -> str:
+def _apply_edits(workdir: str, edits: list[dict]) -> list[str]:
+    """Apply in-place edits. Each edit: {path, old_string, new_string}.
+    Returns list of relative paths for which old_string was not found (replace failed).
+    """
+    failed: list[str] = []
+    for e in edits:
+        path = (e.get("path") or "").strip().lstrip("/")
+        if not path:
+            continue
+        old_s = e.get("old_string")
+        new_s = e.get("new_string")
+        if old_s is None:
+            continue
+        if new_s is None:
+            new_s = ""
+        if old_s == new_s:
+            continue  # no-op edit, skip
+        full = os.path.join(workdir, path)
+        if not os.path.isfile(full):
+            failed.append(path)
+            continue
+        with open(full, "r", encoding="utf-8", errors="replace") as fp:
+            content = fp.read()
+        if old_s in content:
+            new_content = content.replace(old_s, new_s, 1)
+            with open(full, "w", encoding="utf-8") as fp:
+                fp.write(new_content)
+            continue
+        # Optional: normalize line endings and retry
+        content_norm = content.replace("\r\n", "\n").replace("\r", "\n")
+        old_norm = old_s.replace("\r\n", "\n").replace("\r", "\n")
+        if old_norm in content_norm:
+            new_norm = content_norm.replace(old_norm, (new_s or "").replace("\r\n", "\n").replace("\r", "\n"), 1)
+            with open(full, "w", encoding="utf-8") as fp:
+                fp.write(new_norm)
+            continue
+        failed.append(path)
+    return failed
+
+
+def _build_scoped_prompt(build_brief: str, original_request: str, bucket: str) -> str:
+    """Build a prompt for one parallel bucket: markup, styles, or scripts."""
+    shared = f"""Build a complete, production-quality static web app based on the build brief below.
+This is not a toy demo. Build a realistic, product-grade frontend prototype.
+
+Required:
+- multi-file architecture, clear view decomposition, reusable components
+- state separated from render logic (state changes MUST trigger re-render: callbacks, events, or explicit render calls)
+- enough implementation depth that the app feels like a real product
+- UI must feel like a modern iOS/Android App (floating action buttons, bottom tabs, clean padded cards, subtle shadows)
+- **Theme (mandatory):** Use a dark theme with red or purple accent. Base stylesheet provides dark defaults (--bg #0f0f12, --surface #1a1a1f, --accent #a855f7). Do NOT override to white/light or blue (#0071e3).
+
+A branded navbar is auto-injected at the top — do not add your own. Use class="container" for the main content wrapper (below navbar).
+Base stylesheet with design tokens is already applied — output only app-specific CSS using those variables.
+
+## Build Brief
+{build_brief}
+
+## Original Request (for context)
+{original_request}
+
+You must generate **only** the following files. The rest of the app (other file groups) is generated in parallel; use the structure and naming from the brief (e.g. .container, scripts/app.js, styles/main.css) so the full app is consistent.
+"""
+    if bucket == "markup":
+        return shared + """
+**Output only:** files with path exactly `index.html` or `data.json`.
+- index.html: full app shell, sections, <script> tags linking to scripts/*.js and <link> to styles/*.css. All content inside .container. No inline event handlers; all events bound in JS.
+- data.json: initial/seed data if the brief requires it; otherwise minimal valid JSON (e.g. {} or []).
+
+Return JSON only: {"files": [{"path": "...", "content": "..."}]}.
+Checklist: every visible element inside .container; every id that JS will query exists; every <button> has text or aria-label; every <label for="x"> has matching id="x"; <script> has NO type="module" unless JS has imports.
+"""
+    if bucket == "styles":
+        return shared + """
+**Output only:** files under `styles/` with extension `.css` (e.g. styles/main.css, styles/theme.css).
+Use design tokens (--bg, --surface, --accent, --space-*, etc.). Hero/primary display font-size ≥ 4rem; h1 font-weight ≥ 600, font-size ≥ 1.25rem.
+Bottom nav: active tab = background var(--accent), color var(--accent-text); inactive = transparent, color var(--text-muted). One primary button per view; others secondary or ghost.
+
+Return JSON only: {"files": [{"path": "...", "content": "..."}]}.
+Checklist: theme dark + red/purple accent; every class toggled in JS has a rule; flex containers with flex-wrap have row-gap set.
+"""
+    if bucket == "scripts":
+        return shared + """
+**Output only:** files under `scripts/` with extension `.js` (e.g. scripts/app.js).
+State separated from render; state mutations trigger re-render. No inline handlers in HTML — bind all events in JS. Every getElementById/querySelector id exists in index.html; every classList toggle has a CSS rule. localStorage get/set pairs match; guard getItem with || 0 or fallback before arithmetic.
+
+Return JSON only: {"files": [{"path": "...", "content": "..."}]}.
+Checklist: no type="module" unless file has import statements; every feature in the brief implemented; re-render called after state changes.
+"""
+    raise ValueError(f"Unknown bucket: {bucket}")
+
+
+def build_app(job_id: str, build_brief: str, update_job, user_prompt: str | None = None) -> str:
+    """Generate, validate, and fix an app from a build brief. Caller must run expand_request then plan_build first."""
+    t0 = time.perf_counter()
     workdir = tempfile.mkdtemp(prefix=f"job_{job_id}_")
+    original_request = (user_prompt or "").strip() or "(see build brief)"
 
     try:
-        update_job(job_id, step="generating", progress=20)
-        spec_prompt = f"""Generate a static web app. A branded navbar (logo + brand) is auto-injected at the top; do not add a navbar. A base stylesheet is applied; your style.css is appended after it — output only app-specific CSS using base variables. Use class="container" for the main content wrapper (below the navbar).
+        # Generate code from the brief (expand + plan are done by the caller)
+        update_job(job_id, step="generating" + (" (parallel)" if PARALLEL_BUILD else ""), progress=35)
+        if PARALLEL_BUILD:
+            with ThreadPoolExecutor(max_workers=3) as executor:
+                fut_markup = executor.submit(call_llm, _build_scoped_prompt(build_brief, original_request, "markup"))
+                fut_styles = executor.submit(call_llm, _build_scoped_prompt(build_brief, original_request, "styles"))
+                fut_scripts = executor.submit(call_llm, _build_scoped_prompt(build_brief, original_request, "scripts"))
+                out_markup = fut_markup.result()
+                out_styles = fut_styles.result()
+                out_scripts = fut_scripts.result()
+            files = (out_markup.get("files") or []) + (out_styles.get("files") or []) + (out_scripts.get("files") or [])
+        else:
+            spec_prompt = f"""Build a complete, production-quality static web app based on the build brief below.
 
-User request:
-{user_prompt}
+This is not a toy demo. Build a realistic, product-grade frontend prototype.
 
-Return JSON only with key "files" (array of {{"path": "...", "content": "..."}}).
+Required:
+- multi-file architecture
+- clear view decomposition
+- reusable components
+- state separated from render logic (BUT state changes MUST trigger a re-render of the DOM! Use callbacks, events, or explicit render calls after state mutations)
+- enough implementation depth that the app feels like a real product, not a coding exercise
+- UI must feel like a modern iOS/Android App (floating action buttons, bottom tabs, clean padded cards, subtle shadows) — NOT a basic 2000s webpage.
+- **Theme (mandatory):** Use a dark theme with red or purple accent. The base stylesheet provides dark defaults (--bg #0f0f12, --surface #1a1a1f, --accent #a855f7). Do NOT override these to white/light or blue (#0071e3). If you add :root overrides, keep --bg and --surface dark and --accent red or purple unless the brief explicitly asks for a light/medical look.
+
+A branded navbar (logo + brand) is auto-injected at the top — do not add your own navbar or header element.
+A base stylesheet with design tokens is already applied — output only app-specific CSS using those variables.
+Use class="container" for the main content wrapper (renders below the navbar).
+
+## Build Brief
+{build_brief}
+
+## Original Request (for context)
+{original_request}
+
+Return JSON only — key "files", array of {{"path": "...", "content": "..."}} covering index.html, data.json, and all necessary CSS and JS files within styles/ and scripts/.
+Implement every feature in the brief. Write complete, working code — no placeholders, no TODOs, no stubs.
+
+**Bottom nav / tabs styling:** Bad: all four bottom tabs use background: var(--accent). Good: active tab = background: var(--accent), color: var(--accent-text); inactive tabs = background: transparent, color: var(--text-muted) (ghost).
+
+## Pre-flight checklist — verify ALL of these before returning your JSON:
+- [ ] Every visible element (h1, sections, all content) is inside .container — nothing sits between the navbar and .container in the DOM
+- [ ] <script> tag has NO type="module" unless the JS contains actual import statements
+- [ ] Every id queried in JS via getElementById/querySelector exists in index.html
+- [ ] Every CSS class toggled in JS via classList has a rule defined in a CSS file
+- [ ] Every localStorage.getItem('key') has an exactly matching localStorage.setItem('key')
+- [ ] No inline event handlers (onclick, onchange) anywhere in index.html — all events bound in JS
+- [ ] Every <button> has visible text or an aria-label
+- [ ] Every <label for="x"> has a matching id="x" on an input element
+- [ ] The hero/primary display element uses font-size ≥ 4rem in CSS
+- [ ] State mutations ALWAYS trigger a UI re-render (check that event listeners actually call render() or a callback that updates the DOM)
+- [ ] Every localStorage.getItem() call is guarded with || 0 or a safe fallback before arithmetic
+- [ ] The h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem in CSS
+- [ ] Exactly ONE button per view is styled as primary (accent bg) — all others are secondary or ghost
+- [ ] Bottom nav / tabs: only one tab (active) is primary; inactive tabs are ghost or muted (transparent, var(--text-muted))
+- [ ] Every button group uses a flex row container — no button group stacks vertically on desktop
+- [ ] No buttons exist that are not in the build brief (no invented Help/Info/Settings buttons)
+- [ ] All button labels fit on one line (min-width and padding set explicitly)
+- [ ] The app is functional and visually polished at both 375px and 1200px widths
+- [ ] Every feature explicitly mentioned in the original request exists in the output —
+      go through the request line by line and verify each one
+- [ ] Phase-based apps show the current phase name prominently in the UI at all times
+- [ ] All phases are fully implemented — not just the first one
+- [ ] Flex containers with flex-wrap have row-gap set explicitly
+- [ ] Theme: dark --bg/--surface and red or purple --accent (no white background, no blue #0071e3 as primary accent) unless the brief explicitly requires light/medical
 """
-        out = call_llm(spec_prompt)
-        files = out.get("files", [])
+            out = call_llm(spec_prompt)
+            files = out.get("files", [])
         write_files(workdir, files)
 
+        # Step 4: Validate and iteratively fix
         for i in range(MAX_ITERS):
-            update_job(job_id, step="validating", progress=40 + i * 10)
+            update_job(job_id, step="validating", progress=50 + i * 10)
             issues = validate_project(workdir)
 
             if not issues:
                 break
 
-            update_job(job_id, step="fixing", progress=55 + i * 10)
-            current = {}
-            for name in ["index.html", "style.css", "script.js", "data.json"]:
-                p = os.path.join(workdir, name)
-                if os.path.exists(p):
-                    with open(p, "r", encoding="utf-8") as fp:
-                        current[name] = fp.read()
+            update_job(job_id, step="fixing", progress=60 + i * 10)
 
-            fix_prompt = f"""The generated app has issues:
+            # Collect affected paths from issues (file, fix_file); fallback index.html when missing
+            affected_paths: set[str] = set()
+            for iss in issues:
+                f = iss.get("file")
+                if f and isinstance(f, str):
+                    affected_paths.add(f.strip().lstrip("/"))
+                ff = iss.get("fix_file")
+                if ff and isinstance(ff, str):
+                    affected_paths.add(ff.strip().lstrip("/"))
+            if not affected_paths:
+                affected_paths.add("index.html")
+
+            # When only index.html is in scope (e.g. project_size or other file-less issue), include
+            # all CSS and JS so the model sees the full app. Otherwise it may replace HTML only and
+            # desync from existing CSS/JS, producing an unstyled or broken app.
+            if affected_paths <= {"index.html"}:
+                for root, _, names in os.walk(workdir):
+                    for name in names:
+                        if name.endswith(".css"):
+                            p = os.path.join(root, name)
+                            rel = os.path.relpath(p, workdir).replace("\\", "/")
+                            affected_paths.add(rel)
+                        elif name.endswith(".js"):
+                            p = os.path.join(root, name)
+                            rel = os.path.relpath(p, workdir).replace("\\", "/")
+                            affected_paths.add(rel)
+
+            # Read only affected files
+            affected_files: dict[str, str] = {}
+            for rel in sorted(affected_paths):
+                full = os.path.join(workdir, rel)
+                if os.path.isfile(full):
+                    with open(full, "r", encoding="utf-8", errors="replace") as fp:
+                        affected_files[rel] = fp.read()
+
+            if USE_EDIT_BASED_FIX and affected_files:
+                fix_prompt_edit = f"""The generated app has validation issues. Fix them with targeted edits.
+
+## Issues (each may include "file", "snippet", "fix_file" for context)
 {json.dumps(issues, indent=2)}
 
-Current files:
+## Affected files (only these files — use exact path and exact old_string from content below)
+{json.dumps(affected_files, indent=2)}
+
+## Original Build Brief (for reference)
+{build_brief}
+
+Return JSON only. Prefer edits; use full_files only if an edit is too large or ambiguous.
+
+Example shape:
+{{"edits": [{{"path": "index.html", "old_string": "exact text from file", "new_string": "replacement"}}]}}
+
+Optional fallback for a path: {{"full_files": [{{"path": "path/to/file", "content": "full file content"}}]}}
+
+Rules:
+- Fix every issue without exception. Preserve existing features.
+- For "edits": use exact old_string from the affected file content above (copy-paste). One replace per edit; you may include multiple edits per file.
+- Do not return full file contents unless you use "full_files" for that path.
+- Preserve exact character content in HTML (e.g. emoji in buttons like 🗑️ or ✏️); do not replace with \\u escapes or other characters.
+- If you change HTML structure or class names (e.g. for project_size or new sections), you must also update the CSS and JS so selectors and behavior match. Do not replace only index.html and leave CSS/JS out of sync — the app must remain styled and functional.
+"""
+                out = call_llm(fix_prompt_edit)
+                edits = out.get("edits") or []
+                full_files = out.get("full_files") or []
+                failed = _apply_edits(workdir, edits)
+                if full_files:
+                    write_files(workdir, full_files)
+                if failed:
+                    # Fallback: re-run fix with full codebase for this round
+                    current = {}
+                    for root, _, fs in os.walk(workdir):
+                        for name in fs:
+                            p = os.path.join(root, name)
+                            rel_path = os.path.relpath(p, workdir).replace("\\", "/")
+                            with open(p, "r", encoding="utf-8", errors="replace") as fp:
+                                current[rel_path] = fp.read()
+                    fix_prompt_full = f"""The generated app has validation issues. Some targeted edits could not be applied (old_string not found in: {failed}).
+
+## Issues
+{json.dumps(issues, indent=2)}
+
+## Current Files
 {json.dumps(current, indent=2)}
 
-Return JSON only with full corrected "files" array (overwrite all).
-"""
-            out = call_llm(fix_prompt)
-            files = out.get("files", [])
-            write_files(workdir, files)
+## Build Brief (reference)
+{build_brief}
 
-        update_job(job_id, step="uploading", progress=85)
+Return JSON only — key "files", full corrected array. Fix every issue. Preserve features. Output complete file contents.
+"""
+                    out = call_llm(fix_prompt_full)
+                    files = out.get("files", [])
+                    write_files(workdir, files)
+            else:
+                current = {}
+                for root, _, fs in os.walk(workdir):
+                    for name in fs:
+                        p = os.path.join(root, name)
+                        rel_path = os.path.relpath(p, workdir).replace("\\", "/")
+                        with open(p, "r", encoding="utf-8", errors="replace") as fp:
+                            current[rel_path] = fp.read()
+                fix_prompt = f"""The generated app has validation issues that must ALL be fixed completely.
+
+## Issues Found
+{json.dumps(issues, indent=2)}
+
+## Current Files
+{json.dumps(current, indent=2)}
+
+## Original Build Brief (for reference)
+{build_brief}
+
+Return JSON only — key "files", full corrected array. Rules:
+- Fix every issue listed above without exception.
+- Preserve all existing features — do not remove functionality to make fixes easier.
+- Output complete file contents only — no truncation, no "... rest unchanged ..." comments.
+
+## Pre-flight checklist — verify ALL before returning:
+- [ ] Every visible element is inside .container — nothing between navbar and .container
+- [ ] <script> tag has no type="module" unless JS contains actual import statements
+- [ ] Every id queried in JS exists in index.html
+- [ ] Every CSS class toggled in JS is defined in a CSS file
+- [ ] Every localStorage.getItem key has a matching localStorage.setItem key
+- [ ] No inline event handlers in index.html
+- [ ] Every <button> has visible text or aria-label
+- [ ] Every <label for="x"> has a matching id="x" input
+- [ ] Hero display element uses font-size ≥ 4rem
+- [ ] State mutations ALWAYS trigger a UI re-render (check that event listeners actually call render() or a callback that updates the DOM)
+- [ ] Every localStorage.getItem() is guarded with a safe fallback before arithmetic
+- [ ] h1/app title has font-weight ≥ 600 and font-size ≥ 1.25rem
+- [ ] Exactly ONE button per view is primary — all others are secondary or ghost
+- [ ] Every button group is a flex row — no stacking on desktop
+- [ ] Theme: dark --bg/--surface and red or purple --accent (no white/blue default) unless the brief requires light/medical
+- [ ] No invented buttons absent from the build brief
+- [ ] All button labels fit on one line
+- [ ] Every feature from the original request is present in the output
+- [ ] All phases of phase-based apps are fully implemented
+- [ ] Flex containers with flex-wrap have row-gap set
+"""
+                out = call_llm(fix_prompt)
+                files = out.get("files", [])
+                write_files(workdir, files)
+            # Re-ensure first linked CSS has base design tokens (edits may have removed them).
+            _apply_style_template(workdir)
+
+        # Step 5: Upload or save locally
+        update_job(job_id, step="uploading", progress=88)
         if S3_BUCKET and PUBLIC_BASE_URL:
             prefix = f"apps/{job_id}/"
             upload_folder_to_s3(workdir, S3_BUCKET, prefix)
@@ -374,14 +955,19 @@ Return JSON only with full corrected "files" array (overwrite all).
             # Local mode: copy to output dir, then delete local workspace
             out_dir = os.path.join(LOCAL_OUTPUT_DIR, job_id)
             os.makedirs(out_dir, exist_ok=True)
-            for name in os.listdir(workdir):
-                src = os.path.join(workdir, name)
-                if os.path.isfile(src):
+            for root, _, files in os.walk(workdir):
+                for name in files:
+                    src = os.path.join(root, name)
+                    rel = os.path.relpath(src, workdir)
+                    dst = os.path.join(out_dir, rel)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
                     with open(src, "rb") as f:
-                        open(os.path.join(out_dir, name), "wb").write(f.read())
+                        open(dst, "wb").write(f.read())
             result_url = f"file://{os.path.abspath(out_dir)}/index.html"
             shutil.rmtree(workdir, ignore_errors=True)
             workdir = None
+        elapsed = time.perf_counter() - t0
+        update_job(job_id, step="done", progress=100, duration_seconds=round(elapsed, 1))
         return result_url
 
     finally:
