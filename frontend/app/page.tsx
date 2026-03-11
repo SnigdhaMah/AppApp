@@ -80,6 +80,37 @@ const LockIcon = () => (
   </svg>
 );
 
+const CheckSplitIcon = () => (
+  <svg width="70" height="70" viewBox="0 0 52 52" fill="none">
+    {/* receipt */}
+    <rect
+      x="14"
+      y="10"
+      width="24"
+      height="30"
+      rx="4"
+      fill="#1a1a2e"
+      opacity="0.9"
+    />
+
+    {/* split lines */}
+    <path
+      d="M18 20H34"
+      stroke="white"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      opacity="0.7"
+    />
+    <path
+      d="M18 26H34"
+      stroke="white"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      opacity="0.7"
+    />
+  </svg>
+);
+
 const STATIC_APPS: App[] = [
   {
     title: "App²  Studio",
@@ -89,11 +120,11 @@ const STATIC_APPS: App[] = [
     icon: <StudioIcon />,
   },
   {
-    title: "Coffee Chatter",
+    title: "Check Split",
     logo: "",
-    link: "https://buildappsstack-appsbucket0b78b832-eptrkwrugpmp.s3.us-east-2.amazonaws.com/apps/01KKCW1N8A09VK1GN0R5ATYZSY/index.html",
+    link: "https://buildappsstack-appsbucket0b78b832-eptrkwrugpmp.s3.us-east-2.amazonaws.com/apps/01KK8C7AG50EZFEQ0DMX3MEB86/index.html",
     color: "linear-gradient(135deg, #e84adb 0%, #f1c3be 100%)",
-    icon: <CoffeeIcon />,
+    icon: <CheckSplitIcon />,
   },
 ];
 
@@ -108,25 +139,25 @@ export default function Dashboard() {
   const totalSlots = 9;
   const lockedCount = totalSlots - 4;
 
-//   async function getApps() {
-//     setApiError(null);
-//     if (!API_BASE) return;
-//     try {
-//       const res = await fetch(`${API_BASE}/apps`, {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//         body: JSON.stringify({}),
-//       });
-//       if (!res.ok) {
-//         const err = await res.text();
-//         setApiError(err || "Failed to fetch apps");
-//         return;
-//       }
-//       const data = await res.json();
-//     } catch {
-//       setApiError("Something went wrong.");
-//     }
-//   }
+  //   async function getApps() {
+  //     setApiError(null);
+  //     if (!API_BASE) return;
+  //     try {
+  //       const res = await fetch(`${API_BASE}/apps`, {
+  //         method: "POST",
+  //         headers: { "Content-Type": "application/json" },
+  //         body: JSON.stringify({}),
+  //       });
+  //       if (!res.ok) {
+  //         const err = await res.text();
+  //         setApiError(err || "Failed to fetch apps");
+  //         return;
+  //       }
+  //       const data = await res.json();
+  //     } catch {
+  //       setApiError("Something went wrong.");
+  //     }
+  //   }
 
   // useEffect(() => { getApps(); }, []);
 
@@ -170,7 +201,7 @@ export default function Dashboard() {
               </button>
 
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!importUrl) return;
 
                   const newIndex = apps.length;
@@ -178,7 +209,7 @@ export default function Dashboard() {
                   setApps([
                     ...apps,
                     {
-                      title: "Todo app",
+                      title: "New App",
                       logo: "",
                       link: importUrl,
                       color:
@@ -186,7 +217,7 @@ export default function Dashboard() {
                       icon: <CoffeeIcon />,
                     },
                   ]);
-                  setEmptyCount(emptyCount-1)
+                  setEmptyCount(emptyCount - 1);
                   setNewAppIndex(newIndex);
 
                   setTimeout(() => {
@@ -265,8 +296,7 @@ export default function Dashboard() {
             {/* Empty free slots */}
             {Array.from({ length: emptyCount }).map((_, i) => (
               <div key={`free-${i}`} style={styles.appSlot}>
-                <div style={styles.lockedIcon}>
-                </div>
+                <div style={styles.lockedIcon}></div>
               </div>
             ))}
             {/* Empty locked slots */}
