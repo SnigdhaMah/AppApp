@@ -125,13 +125,40 @@ export default function AppBuilder() {
         style={{
           padding: "10px 14px",
           height: "44px",
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
         }}
       >
-        <Link href={"/"}>
-          <div className="nav-logo" aria-label="App² logo">
-            <img src="/logo.svg" alt="App² logo" width="26" height="26" />
-          </div>
+        <Link
+          href="/"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "32px",
+            height: "32px",
+            cursor: "pointer",
+          }}
+        >
+          {/* Back button */}
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="white"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
         </Link>
+
+        <div className="nav-logo" aria-label="App² logo">
+          <img src="/logo.svg" alt="App² logo" width="26" height="26" />
+        </div>
       </nav>
 
       {/* Page */}
@@ -310,8 +337,7 @@ export default function AppBuilder() {
               }}
             >
               {STEPS.map((s, i) => {
-                const isDone =
-                  job.status === "complete" || activeStepIndex > i;
+                const isDone = job.status === "complete" || activeStepIndex > i;
                 const isActive = job.step === s.key;
                 return (
                   <div

@@ -97,8 +97,9 @@ export default function Dashboard() {
 
 //   useEffect(() => { getApps(); }, []);
 
-  const totalSlots = 8;
-  const lockedCount = totalSlots - apps.length;
+  const totalSlots = 9;
+  const emptyCount = 4 - apps.length
+  const lockedCount = totalSlots - 4;
 
   return (
     <div style={styles.root}>
@@ -172,6 +173,24 @@ export default function Dashboard() {
         {apiError && (
           <p style={styles.error}>{apiError}</p>
         )}
+        <button
+            type="button"
+            className="build-btn"
+            // onClick={}
+            style={{
+                marginTop: "5%",
+              fontSize: "20px",
+              padding: "11px 16px",
+              borderRadius: "10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: "6px",
+              zIndex:100
+            }}
+          >
+            Import App
+          </button>
       </main>
     </div>
   );
@@ -285,7 +304,7 @@ const styles: Record<string, React.CSSProperties> = {
 },
   grid: {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))",
   gap: "clamp(16px, 3vw, 24px)",
   justifyContent: "center",
   maxWidth: "560px",
