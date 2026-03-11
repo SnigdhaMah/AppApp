@@ -97,7 +97,7 @@ export default function Dashboard() {
 
 //   useEffect(() => { getApps(); }, []);
 
-  const totalSlots = 12;
+  const totalSlots = 8;
   const lockedCount = totalSlots - apps.length;
 
   return (
@@ -253,21 +253,21 @@ const styles: Record<string, React.CSSProperties> = {
     zIndex: 10,
   },
   glassFrame: {
-    position: "relative",
-    width: "min(820px, 96vw)",
-    background: "rgba(255,255,255,0.055)",
-    backdropFilter: "blur(40px) saturate(180%)",
-    WebkitBackdropFilter: "blur(40px) saturate(180%)",
-    borderRadius: "28px",
-    border: "1px solid rgba(255,255,255,0.12)",
-    padding: "52px 52px 52px",
-    boxShadow: `
-      0 0 0 1px rgba(255,255,255,0.05) inset,
-      0 40px 80px rgba(0,0,0,0.5),
-      0 0 120px rgba(180,60,40,0.08)
-    `,
-    overflow: "hidden",
-  },
+  position: "relative",
+  width: "min(820px, 96vw)",
+  background: "rgba(255,255,255,0.055)",
+  backdropFilter: "blur(40px) saturate(180%)",
+  WebkitBackdropFilter: "blur(40px) saturate(180%)",
+  borderRadius: "28px",
+  border: "1px solid rgba(255,255,255,0.12)",
+  padding: "clamp(20px, 5vw, 52px)",
+  boxShadow: `
+    0 0 0 1px rgba(255,255,255,0.05) inset,
+    0 40px 80px rgba(0,0,0,0.5),
+    0 0 120px rgba(180,60,40,0.08)
+  `,
+  overflow: "hidden",
+},
   shimmerBorder: {
     position: "absolute",
     inset: 0,
@@ -277,18 +277,21 @@ const styles: Record<string, React.CSSProperties> = {
     animation: "shimmer 4s ease-in-out infinite",
   },
   heading: {
-    color: "rgba(255,255,255,0.92)",
-    fontSize: 90,
-    fontWeight: 10,
-    textAlign: "center",
-    marginBottom: "44px",
-    // textShadow: "0 2px 20px rgba(0,0,0,0.4)",
-  },
+  color: "rgba(255,255,255,0.92)",
+  fontSize: "clamp(36px, 8vw, 90px)",
+  fontWeight: 300,
+  textAlign: "center",
+  marginBottom: "clamp(24px, 5vw, 44px)",
+},
   grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(4, 1fr)",
-    gap: "24px 20px",
-  },
+  display: "grid",
+  gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
+  gap: "clamp(16px, 3vw, 24px)",
+  justifyContent: "center",
+  maxWidth: "560px",
+  margin: "0 auto",
+  width: "100%",
+},
   appSlot: {
     display: "flex",
     flexDirection: "column",
@@ -297,15 +300,15 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: "pointer",
   },
   appIcon: {
-    width: "120px",
-    height: "120px",
-    borderRadius: "24px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-    overflow: "hidden",
-  },
+  width: "clamp(72px, 18vw, 120px)",
+  height: "clamp(72px, 18vw, 120px)",
+  borderRadius: "24px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  position: "relative",
+  overflow: "hidden",
+},
   iconGloss: {
     position: "absolute",
     top: 0,
@@ -317,16 +320,16 @@ const styles: Record<string, React.CSSProperties> = {
     pointerEvents: "none",
   },
   lockedIcon: {
-    width: "120px",
-    height: "120px",
-    borderRadius: "24px",
-    background: "rgba(255,255,255,0.05)",
-    border: "1px solid rgba(255,255,255,0.07)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    backdropFilter: "blur(8px)",
-  },
+  width: "clamp(72px, 18vw, 120px)",
+  height: "clamp(72px, 18vw, 120px)",
+  borderRadius: "24px",
+  background: "rgba(255,255,255,0.05)",
+  border: "1px solid rgba(255,255,255,0.07)",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  backdropFilter: "blur(8px)",
+},
   appLabel: {
     color: "rgba(255,255,255,0.75)",
     fontSize: "0.78rem",
